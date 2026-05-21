@@ -1,0 +1,28 @@
+schemaVersion: v1
+profile: docker-only
+modules:
+  docker:
+    enabled: true
+    channel: stable
+    addDeployUserToGroup: false
+  firewall:
+    enabled: true
+    sshPort: 22
+    allowWeb: false
+  swap:
+    enabled: true
+    size: 2G
+    path: /swapfile
+  deployUser:
+    enabled: true
+    name: deploy
+    sshAuthorizedKeys: []
+    sudo: true
+    groups: []
+  caddy:
+    mode: none
+confirmations:
+  enableFirewall: false
+  dockerGroupRootEquivalent: false
+runtime:
+  logDir: /var/log/servy

@@ -1,0 +1,21 @@
+schemaVersion: v1
+profile: base
+modules:
+  firewall:
+    enabled: false
+    sshPort: 22
+  swap:
+    enabled: false
+    size: 2G
+    path: /swapfile
+  deployUser:
+    enabled: false
+  hardening:
+    fail2ban: false
+    unattendedUpgrades: false
+    basicSysctl: false
+    disableRootSSHLogin: false
+    disablePasswordAuth: false
+    restrictSSHUsers: false
+runtime:
+  logDir: /var/log/servy

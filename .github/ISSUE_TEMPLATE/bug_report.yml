@@ -1,0 +1,46 @@
+name: Bug report
+description: Report incorrect or unsafe behavior
+title: "bug: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: Do not report vulnerabilities here. Use the security policy.
+  - type: input
+    id: version
+    attributes:
+      label: Servy version
+      placeholder: servy version output
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, version, codename, architecture, VPS provider if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and sanitized config
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or doctor output
+      render: text

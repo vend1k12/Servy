@@ -1,0 +1,7 @@
+.git
+.github
+.gitignore
+.DS_Store
+servy
+*.log
+coverage.out

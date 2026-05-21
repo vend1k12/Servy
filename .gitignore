@@ -1,0 +1,15 @@
+# Go
+/bin/
+/dist/
+/servy
+*.test
+coverage.out
+
+# Local config and logs
+servy.yml
+*.log
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

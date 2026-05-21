@@ -1,0 +1,47 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout tag without third-party actions
+        run: |
+          set -eu
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth 1 origin "$GITHUB_SHA"
+          git checkout --detach "$GITHUB_SHA"
+      - name: Verify Go toolchain
+        run: GOTOOLCHAIN=go1.26.3 go version
+      - run: GOTOOLCHAIN=go1.26.3 go test ./...
+      - run: GOTOOLCHAIN=go1.26.3 go vet ./...
+      - name: govulncheck
+        run: GOTOOLCHAIN=go1.26.3 go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Build artifacts
+        run: |
+          set -eu
+          export GOTOOLCHAIN=go1.26.3
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-s -w -X github.com/vend1k12/servy/internal/app.Version=${GITHUB_REF_NAME} -X github.com/vend1k12/servy/internal/app.Commit=${GITHUB_SHA} -X github.com/vend1k12/servy/internal/app.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o dist/servy ./cmd/servy
+            tar -C dist -czf "dist/servy_linux_${arch}.tar.gz" servy
+            rm dist/servy
+          done
+          cd dist
+          sha256sum servy_linux_*.tar.gz > checksums.txt
+      - name: Publish GitHub release
+        env:
+          BASH_ENV: /dev/null
+          ENV: /dev/null
+          GH_TOKEN: ${{ github.token }}
+        shell: /usr/bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" GH_TOKEN="$GH_TOKEN" GITHUB_REF_NAME="$GITHUB_REF_NAME" /usr/bin/gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
