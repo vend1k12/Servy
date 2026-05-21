@@ -6,7 +6,7 @@ modules:
     channel: stable
     addDeployUserToGroup: false
   firewall:
-    enabled: true
+    enabled: false
     sshPort: 22
     allowWeb: false
   swap:

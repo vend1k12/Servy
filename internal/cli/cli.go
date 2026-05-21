@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -66,12 +67,17 @@ func versionCmd(streams IO) *cobra.Command {
 }
 
 func doctorCmd(streams IO) *cobra.Command {
-	return &cobra.Command{Use: "doctor", Short: "Run read-only host diagnostics", RunE: func(cmd *cobra.Command, args []string) error {
+	var jsonOut bool
+	cmd := &cobra.Command{Use: "doctor", Short: "Run read-only host diagnostics", RunE: func(cmd *cobra.Command, args []string) error {
 		osInfo, err := platform.Detect()
 		if err != nil {
 			return err
 		}
-		for _, check := range doctor.Run(osInfo, system.RealState{}) {
+		checks := doctor.Run(osInfo, system.RealState{})
+		if jsonOut {
+			return writeDoctorChecksJSON(streams.Out, checks)
+		}
+		for _, check := range checks {
 			fmt.Fprintf(streams.Out, "[%s] %s - %s\n", check.Status, check.Name, check.Details)
 			if check.Status != "ok" && check.Fix != "" {
 				fmt.Fprintf(streams.Out, "    fix: %s\n", check.Fix)
@@ -79,6 +85,8 @@ func doctorCmd(streams IO) *cobra.Command {
 		}
 		return nil
 	}}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit diagnostics as JSON")
+	return cmd
 }
 
 func validateCmd(streams IO) *cobra.Command {
@@ -97,16 +105,40 @@ func validateCmd(streams IO) *cobra.Command {
 
 func planCmd(streams IO) *cobra.Command {
 	var path string
+	var jsonOut bool
 	cmd := &cobra.Command{Use: "plan [profile]", Args: cobra.MaximumNArgs(1), Short: "Build and print execution plan", RunE: func(cmd *cobra.Command, args []string) error {
 		p, err := loadPlan(path, profileArg(args))
 		if err != nil {
 			return err
 		}
+		if jsonOut {
+			return writeJSON(streams.Out, p)
+		}
 		p.Print(streams.Out)
 		return nil
 	}}
 	cmd.Flags().StringVar(&path, "config", "", "config file (defaults to servy.yml, servy.yaml, .servy.yml)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit plan as JSON")
 	return cmd
+}
+
+type doctorCheckJSON struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Details string `json:"details"`
+	Fix     string `json:"fix,omitempty"`
+}
+
+func writeDoctorChecksJSON(w io.Writer, checks []doctor.Check) error {
+	out := make([]doctorCheckJSON, 0, len(checks))
+	for _, check := range checks {
+		out = append(out, doctorCheckJSON{Name: check.Name, Status: check.Status, Details: check.Details, Fix: check.Fix})
+	}
+	return writeJSON(w, out)
+}
+
+func writeJSON(w io.Writer, v any) error {
+	return json.NewEncoder(w).Encode(v)
 }
 
 func applyCmd(streams IO) *cobra.Command {
@@ -153,32 +185,39 @@ func applyCmd(streams IO) *cobra.Command {
 }
 
 func initCmd(streams IO) *cobra.Command {
-	var profile, output string
-	var apply, yes, force bool
-	cmd := &cobra.Command{Use: "init", Short: "Interactive config wizard", RunE: func(cmd *cobra.Command, args []string) error {
-		reader := bufio.NewReader(streams.In)
-		if profile == "" {
-			profile = ask(reader, streams.Out, "Profile [base/docker-only/node]", "docker-only")
-		}
-		cfg := config.Default(profile)
-		if cfg.Profile == "node" {
-			cfg.Modules.DeployUser.Enabled = askBool(reader, streams.Out, "Create/use deploy user for node tooling?", true)
-			if cfg.Modules.DeployUser.Enabled {
-				cfg.Modules.DeployUser.Name = ask(reader, streams.Out, "Deploy user", "deploy")
+	var profile, output, preset string
+	var apply, custom, force, listPresets, yes bool
+	cmd := &cobra.Command{Use: "init", Short: "Create a Servy YAML config", RunE: func(cmd *cobra.Command, args []string) error {
+		if listPresets {
+			for _, preset := range config.Presets() {
+				fmt.Fprintf(streams.Out, "%s\t%s\n", preset.Name, preset.Description)
 			}
-			cfg.Modules.Node.User = cfg.Modules.DeployUser.Name
+			return nil
 		}
-		cfg.Modules.Firewall.Enabled = askBool(reader, streams.Out, "Enable UFW firewall?", false)
-		if cfg.Modules.Firewall.Enabled {
-			cfg.Confirmations.EnableFirewall = askBool(reader, streams.Out, "Confirm enabling firewall after allowing SSH?", false)
+
+		reader := bufio.NewReader(streams.In)
+		var cfg config.Config
+		if custom {
+			cfg = askCustomConfig(reader, streams.Out)
+		} else {
+			selected := preset
+			if selected == "" {
+				selected = profile
+			}
+			if selected == "" {
+				selected = ask(reader, streams.Out, "Preset [base/docker-only/node/custom]", "docker-only")
+			}
+			if selected == "custom" {
+				cfg = askCustomConfig(reader, streams.Out)
+			} else {
+				var ok bool
+				cfg, ok = config.Preset(selected)
+				if !ok {
+					return fmt.Errorf("unknown preset %q; run `servy init --list-presets`", selected)
+				}
+			}
 		}
-		cfg.Modules.Swap.Enabled = askBool(reader, streams.Out, "Create swapfile?", false)
-		if cfg.Modules.Swap.Enabled {
-			cfg.Modules.Swap.Size = ask(reader, streams.Out, "Swap size", cfg.Modules.Swap.Size)
-		}
-		if cfg.Profile != "base" {
-			cfg.Modules.Caddy.Mode = ask(reader, streams.Out, "Caddy mode [none/host/check-only]", "none")
-		}
+
 		if output == "" {
 			output = "servy.yml"
 		}
@@ -196,13 +235,16 @@ func initCmd(streams IO) *cobra.Command {
 		} else {
 			fmt.Fprintf(streams.Out, "plan preview skipped: %v\n", err)
 		}
-		if apply && yes {
+		if apply || yes {
 			fmt.Fprintln(streams.Out, "run `servy apply --config "+output+" --yes` after reviewing the plan")
 		}
 		return nil
 	}}
-	cmd.Flags().StringVar(&profile, "profile", "", "profile: base, docker-only, node")
+	cmd.Flags().StringVar(&preset, "preset", "", "config preset to write: base, docker-only, node, or custom")
+	cmd.Flags().StringVar(&profile, "profile", "", "deprecated alias for --preset")
 	cmd.Flags().StringVar(&output, "output", "servy.yml", "config path to write")
+	cmd.Flags().BoolVar(&custom, "custom", false, "ask every configurable module option")
+	cmd.Flags().BoolVar(&listPresets, "list-presets", false, "list available config presets")
 	cmd.Flags().BoolVar(&apply, "apply", false, "print apply next step after generating config")
 	cmd.Flags().BoolVar(&yes, "yes", false, "reserved; init never silently mutates the host")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing output config")
@@ -409,11 +451,11 @@ type defaultConfigError struct {
 }
 
 func (e defaultConfigError) Error() string {
-	profile := e.profile
-	if profile == "" {
-		profile = "docker-only"
+	preset := e.profile
+	if preset == "" {
+		preset = "docker-only"
 	}
-	return "no config file found (looked for " + strings.Join(e.paths, ", ") + "); run `servy init --profile " + profile + " --output servy.yml` or pass --config <file>"
+	return "no config file found (looked for " + strings.Join(e.paths, ", ") + "); run `servy init --preset " + preset + " --output servy.yml` or pass --config <file>"
 }
 
 func profileArg(args []string) string {
@@ -502,4 +544,125 @@ func askBool(r *bufio.Reader, w io.Writer, prompt string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+func askCustomConfig(reader *bufio.Reader, w io.Writer) config.Config {
+	dockerEnabled := askBool(reader, w, "Install Docker Engine from the official apt repository?", true)
+	nodeEnabled := askBool(reader, w, "Install host-level Node.js tooling with nvm?", false)
+	if nodeEnabled {
+		dockerEnabled = true
+	}
+
+	profile := "base"
+	if dockerEnabled {
+		profile = "docker-only"
+	}
+	if nodeEnabled {
+		profile = "node"
+	}
+	cfg := config.Default(profile)
+	cfg.Modules.Docker.Enabled = dockerEnabled
+	cfg.Modules.Node.Enabled = nodeEnabled
+	if !dockerEnabled {
+		cfg.Modules.Docker = config.Docker{}
+	}
+	if !nodeEnabled {
+		cfg.Modules.Node = config.Node{}
+	}
+
+	deployDefault := dockerEnabled || nodeEnabled
+	cfg.Modules.DeployUser.Enabled = askBool(reader, w, "Create or reuse a deploy user?", deployDefault)
+	if cfg.Modules.DeployUser.Enabled {
+		cfg.Modules.DeployUser.Name = ask(reader, w, "Deploy user name", "deploy")
+		cfg.Modules.DeployUser.Sudo = askBool(reader, w, "Allow deploy user passwordless sudo for setup tasks?", true)
+		cfg.Modules.DeployUser.Groups = askCSV(reader, w, "Extra deploy user groups, comma-separated", "")
+		cfg.Modules.DeployUser.SSHAuthorizedKeys = askCSV(reader, w, "SSH public keys to append, comma-separated", "")
+	}
+
+	if dockerEnabled {
+		cfg.Modules.Docker.Channel = ask(reader, w, "Docker apt channel", cfg.Modules.Docker.Channel)
+		if cfg.Modules.DeployUser.Enabled {
+			cfg.Modules.Docker.AddDeployUserToGroup = askBool(reader, w, "Add deploy user to docker group?", false)
+			if cfg.Modules.Docker.AddDeployUserToGroup {
+				cfg.Confirmations.DockerGroupRootEquivalent = askBool(reader, w, "Confirm docker group is root-equivalent?", false)
+			}
+		}
+	}
+
+	cfg.Modules.Firewall.Enabled = askBool(reader, w, "Enable UFW firewall?", false)
+	if cfg.Modules.Firewall.Enabled {
+		cfg.Modules.Firewall.SSHPort = askInt(reader, w, "SSH port to allow before enabling UFW", cfg.Modules.Firewall.SSHPort)
+		cfg.Modules.Firewall.AllowWeb = askBool(reader, w, "Allow HTTP/HTTPS through UFW?", false)
+		cfg.Confirmations.EnableFirewall = askBool(reader, w, "Confirm firewall enablement after SSH allow rule?", false)
+	}
+
+	cfg.Modules.Swap.Enabled = askBool(reader, w, "Create swapfile?", false)
+	if cfg.Modules.Swap.Enabled {
+		cfg.Modules.Swap.Size = ask(reader, w, "Swap size", cfg.Modules.Swap.Size)
+		cfg.Modules.Swap.Path = ask(reader, w, "Swap path", cfg.Modules.Swap.Path)
+	}
+
+	cfg.Modules.Caddy.Mode = ask(reader, w, "Caddy mode [none/host/check-only]", cfg.Modules.Caddy.Mode)
+	if cfg.Modules.Caddy.Mode != "none" {
+		cfg.Modules.Caddy.ConfigPath = ask(reader, w, "Existing Caddy config path to document (optional)", cfg.Modules.Caddy.ConfigPath)
+	}
+
+	cfg.Modules.Hardening.Fail2Ban = askBool(reader, w, "Install/enable fail2ban?", false)
+	cfg.Modules.Hardening.UnattendedUpgrades = askBool(reader, w, "Enable unattended security upgrades?", false)
+	cfg.Modules.Hardening.BasicSysctl = askBool(reader, w, "Apply basic sysctl hardening?", false)
+	cfg.Modules.Hardening.DisableRootSSHLogin = askBool(reader, w, "Disable root SSH login?", false)
+	if cfg.Modules.Hardening.DisableRootSSHLogin {
+		cfg.Confirmations.DisableRootSSHLogin = askBool(reader, w, "Confirm root SSH login disablement?", false)
+	}
+	cfg.Modules.Hardening.DisablePasswordAuth = askBool(reader, w, "Disable SSH password authentication?", false)
+	if cfg.Modules.Hardening.DisablePasswordAuth {
+		cfg.Confirmations.DisablePasswordAuth = askBool(reader, w, "Confirm SSH password authentication disablement?", false)
+	}
+	cfg.Modules.Hardening.RestrictSSHUsers = askBool(reader, w, "Restrict SSH users?", false)
+	if cfg.Modules.Hardening.RestrictSSHUsers {
+		cfg.Confirmations.RestrictSSHUsers = askBool(reader, w, "Confirm SSH user restriction?", false)
+	}
+
+	if nodeEnabled {
+		defaultUser := cfg.Modules.DeployUser.Name
+		if defaultUser == "" {
+			defaultUser = "deploy"
+		}
+		cfg.Modules.Node.User = ask(reader, w, "Node tooling target user", defaultUser)
+		cfg.Modules.Node.Version = ask(reader, w, "Node version [lts or numeric]", cfg.Modules.Node.Version)
+		cfg.Modules.Node.InstallPNPM = askBool(reader, w, "Install pnpm via Corepack?", true)
+		cfg.Modules.Node.InstallBun = askBool(reader, w, "Install Bun?", false)
+		cfg.Confirmations.InstallUserTooling = askBool(reader, w, "Confirm official user-level tooling installers?", false)
+	}
+
+	cfg.OS.Distributions = askCSV(reader, w, "Restrict OS distributions, comma-separated (optional)", "")
+	cfg.OS.Codenames = askCSV(reader, w, "Restrict OS codenames, comma-separated (optional)", "")
+	cfg.OS.Architectures = askCSV(reader, w, "Restrict architectures, comma-separated (optional)", "")
+	cfg.Runtime.LogDir = ask(reader, w, "Apply log directory", cfg.Runtime.LogDir)
+	return cfg
+}
+
+func askCSV(reader *bufio.Reader, w io.Writer, prompt, def string) []string {
+	value := ask(reader, w, prompt, def)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func askInt(reader *bufio.Reader, w io.Writer, prompt string, def int) int {
+	answer := ask(reader, w, prompt, fmt.Sprintf("%d", def))
+	var parsed int
+	if _, err := fmt.Sscanf(answer, "%d", &parsed); err != nil {
+		return def
+	}
+	return parsed
 }

@@ -12,7 +12,7 @@ Servy is a single-binary Go CLI that runs **inside** a server, detects the host,
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-pre--v1-orange)](#release-status)
 
-[Quick start](#quick-start) · [Profiles](#profiles) · [Safety model](#safety-model) · [Examples](#examples) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Config generation](#config-generation) · [Profiles](#profiles) · [Safety model](#safety-model) · [Examples](#examples) · [Contributing](#contributing)
 
 </div>
 
@@ -81,10 +81,12 @@ Inspect the host without changing anything:
 sudo ./servy doctor
 ```
 
-Create a config interactively:
+Create a config from a preset or with the custom wizard:
 
 ```sh
-./servy init --output servy.yml
+./servy init --list-presets
+./servy init --preset docker-only --output servy.yml
+./servy init --custom --output servy.yml
 ```
 
 Validate and preview (Servy auto-discovers `servy.yml`, `servy.yaml`, then `.servy.yml` in the current directory):
@@ -94,6 +96,8 @@ Validate and preview (Servy auto-discovers `servy.yml`, `servy.yaml`, then `.ser
 ./servy plan
 ./servy apply --dry-run
 ```
+
+Use `servy doctor --json` and `servy plan --json` when automation or issue reports need structured read-only output.
 
 Apply after reviewing the plan:
 
@@ -136,11 +140,11 @@ sudo servy update
 
 | Command | Purpose | Mutates host? |
 | --- | --- | --- |
-| `servy doctor` | Read-only prerequisite, compatibility, DNS/network, and fix-hint diagnostics | No |
+| `servy doctor [--json]` | Read-only prerequisite, compatibility, DNS/network, and fix-hint diagnostics | No |
 | `servy status` | Read-only host/config/module state summary | No |
-| `servy init` | Interactive config wizard | Writes local YAML only |
+| `servy init [--list-presets] [--preset <name>] [--custom]` | List presets or write config YAML through a preset/custom wizard | Writes local YAML only |
 | `servy validate [profile]` | Strict YAML validation using `--config` or default config discovery | No |
-| `servy plan [profile]` | Build and print execution plan using `--config` or default config discovery | No |
+| `servy plan [profile] [--json]` | Build and print execution plan using `--config` or default config discovery | No |
 | `servy apply [profile] --dry-run` | Print apply plan | No |
 | `servy apply [profile] --yes` | Execute eligible steps | Yes |
 | `servy update check` | Check the latest GitHub Release for a newer CLI | No |
@@ -153,6 +157,20 @@ sudo servy update
 | `servy version` | Print version metadata | No |
 
 `validate`, `plan`, `apply`, `status`, and `module status` search `servy.yml`, `servy.yaml`, and `.servy.yml` when `--config` is omitted. A positional profile such as `servy apply base` verifies that the discovered config's `profile` matches before planning or applying.
+
+## Config generation
+
+`servy init` helps write YAML; it does not configure the host.
+
+| Mode | Use when |
+| --- | --- |
+| `servy init --list-presets` | You want to see the built-in generation templates. |
+| `servy init --preset base --output servy.yml` | You want minimal server prep YAML. |
+| `servy init --preset docker-only --output servy.yml` | You want base setup plus Docker YAML. |
+| `servy init --preset node --output servy.yml` | You want Docker plus optional host-level JavaScript tooling YAML. |
+| `servy init --custom --output servy.yml` | You want the wizard to ask about each module option exposed by the current config schema. |
+
+Presets are generation-time shortcuts only. They write ordinary strict-schema YAML that still goes through the normal `validate`, `plan`, `apply --dry-run`, and explicit `apply --yes` flow. After reviewing the plan for a generated config, apply it the same way as any hand-written config: `sudo servy apply --config servy.yml --yes`. Custom mode is for tailoring module options up front; lockout-risk and privilege-escalating actions still require explicit confirmation fields and default to safe values.
 
 ## Profiles
 
@@ -221,7 +239,7 @@ modules:
     sshAuthorizedKeys: []
     sudo: true
   firewall:
-    enabled: true
+    enabled: false
     sshPort: 22
     allowWeb: false
   swap:

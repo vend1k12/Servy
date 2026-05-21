@@ -36,15 +36,18 @@ Then run mutating tests in snapshots only:
 5. Caddy `check-only` and `host` modes.
 6. node profile with explicit `installUserTooling` confirmation.
 
+## Completed CLI UX items
+
+- `servy doctor --json` provides read-only structured diagnostics for issue reports and automation.
+- `servy plan --json` provides read-only structured plans for automation and CI policy checks.
+
 ## High-value engineering follow-ups
 
 1. Move Docker/Caddy repository file writes from shell to Go safe file operations.
 2. Add fingerprint checks for Docker and Caddy apt GPG keys.
 3. Add integration tests for `safeops.AppendAuthorizedKey` in a Linux container.
-4. Add `servy doctor --json` for issue reports and automation.
-5. Add JSON output for `plan` to support CI policy checks.
-6. Add zsh/fish/powershell completion installers after CLI usage stabilizes.
-7. Add release artifact signing with a maintainer-controlled public key before recommending `install.sh` for production.
+4. Add zsh/fish/powershell completion installers after CLI usage stabilizes.
+5. Add release artifact signing with a maintainer-controlled public key before recommending `install.sh` for production.
 
 ## Issue labels
 
