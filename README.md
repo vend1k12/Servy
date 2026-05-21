@@ -6,11 +6,11 @@
 
 Servy is a single-binary Go CLI that runs **inside** a server, detects the host, builds a readable execution plan, and applies only explicitly approved setup steps.
 
-[![CI](https://github.com/vend1k12/servy/actions/workflows/ci.yml/badge.svg)](https://github.com/vend1k12/servy/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/vend1k12/servy/actions/workflows/codeql.yml/badge.svg)](https://github.com/vend1k12/servy/actions/workflows/codeql.yml)
-[![Go](https://img.shields.io/badge/Go-1.26.3-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-pre--v1-orange)](#release-status)
+[![CI](https://shieldcn.dev/github/ci/vend1k12/Servy.svg?workflow=ci.yml&branch=main&variant=branded)](https://github.com/vend1k12/Servy/actions/workflows/ci.yml)
+[![CodeQL](https://shieldcn.dev/github/checks/vend1k12/Servy/main/analyze.svg?variant=branded)](https://github.com/vend1k12/Servy/actions/workflows/codeql.yml)
+[![Go](https://shieldcn.dev/badge/Go-1.26.3-00ADD8.svg?logo=go&logoColor=white&variant=branded)](https://go.dev/)
+[![License](https://shieldcn.dev/github/license/vend1k12/Servy.svg?variant=branded)](LICENSE)
+[![Status](https://shieldcn.dev/badge/status-pre--v1-F97316.svg?variant=branded)](#release-status)
 
 [Quick start](#quick-start) · [Config generation](#config-generation) · [Profiles](#profiles) · [Safety model](#safety-model) · [Examples](#examples) · [Contributing](#contributing)
 
