@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,6 +23,7 @@ import (
 	"github.com/vend1k12/servy/internal/runner"
 	"github.com/vend1k12/servy/internal/safeops"
 	"github.com/vend1k12/servy/internal/system"
+	"github.com/vend1k12/servy/internal/update"
 )
 
 type IO struct {
@@ -51,7 +55,7 @@ func NewRoot(streams IO) *cobra.Command {
 	root.SetIn(streams.In)
 	root.SetOut(streams.Out)
 	root.SetErr(streams.Err)
-	root.AddCommand(versionCmd(streams), doctorCmd(streams), validateCmd(streams), planCmd(streams), applyCmd(streams), initCmd(streams), statusCmd(streams), logsCmd(streams), moduleCmd(streams), internalCmd())
+	root.AddCommand(versionCmd(streams), doctorCmd(streams), validateCmd(streams), planCmd(streams), applyCmd(streams), initCmd(streams), statusCmd(streams), logsCmd(streams), moduleCmd(streams), updateCmd(streams), completionCmd(streams), internalCmd())
 	return root
 }
 
@@ -69,6 +73,9 @@ func doctorCmd(streams IO) *cobra.Command {
 		}
 		for _, check := range doctor.Run(osInfo, system.RealState{}) {
 			fmt.Fprintf(streams.Out, "[%s] %s - %s\n", check.Status, check.Name, check.Details)
+			if check.Status != "ok" && check.Fix != "" {
+				fmt.Fprintf(streams.Out, "    fix: %s\n", check.Fix)
+			}
 		}
 		return nil
 	}}
@@ -76,31 +83,29 @@ func doctorCmd(streams IO) *cobra.Command {
 
 func validateCmd(streams IO) *cobra.Command {
 	var path string
-	cmd := &cobra.Command{Use: "validate --config <file>", Short: "Validate YAML config", RunE: func(cmd *cobra.Command, args []string) error {
-		if path == "" {
-			return fmt.Errorf("--config is required")
-		}
-		if _, err := config.LoadFile(path); err != nil {
+	cmd := &cobra.Command{Use: "validate [profile]", Args: cobra.MaximumNArgs(1), Short: "Validate YAML config", RunE: func(cmd *cobra.Command, args []string) error {
+		requestedProfile := profileArg(args)
+		if _, err := loadConfig(path, requestedProfile); err != nil {
 			return err
 		}
 		fmt.Fprintln(streams.Out, "config ok")
 		return nil
 	}}
-	cmd.Flags().StringVar(&path, "config", "", "config file")
+	cmd.Flags().StringVar(&path, "config", "", "config file (defaults to servy.yml, servy.yaml, .servy.yml)")
 	return cmd
 }
 
 func planCmd(streams IO) *cobra.Command {
 	var path string
-	cmd := &cobra.Command{Use: "plan --config <file>", Short: "Build and print execution plan", RunE: func(cmd *cobra.Command, args []string) error {
-		p, err := loadPlan(path)
+	cmd := &cobra.Command{Use: "plan [profile]", Args: cobra.MaximumNArgs(1), Short: "Build and print execution plan", RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := loadPlan(path, profileArg(args))
 		if err != nil {
 			return err
 		}
 		p.Print(streams.Out)
 		return nil
 	}}
-	cmd.Flags().StringVar(&path, "config", "", "config file")
+	cmd.Flags().StringVar(&path, "config", "", "config file (defaults to servy.yml, servy.yaml, .servy.yml)")
 	return cmd
 }
 
@@ -108,8 +113,8 @@ func applyCmd(streams IO) *cobra.Command {
 	var path string
 	var dryRun bool
 	var yes bool
-	cmd := &cobra.Command{Use: "apply --config <file>", Short: "Apply YAML config", RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, osInfo, p, err := loadPlanParts(path)
+	cmd := &cobra.Command{Use: "apply [profile]", Args: cobra.MaximumNArgs(1), Short: "Apply YAML config", RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, cfgPath, osInfo, p, err := loadPlanParts(path, profileArg(args))
 		if err != nil {
 			return err
 		}
@@ -133,7 +138,7 @@ func applyCmd(streams IO) *cobra.Command {
 		defer cancel()
 		results, err := runner.Apply(ctx, p, runner.CommandRunner{})
 		for _, res := range results {
-			_ = log.Write(logging.Entry{Timestamp: time.Now(), Command: "apply", Profile: cfg.Profile, ConfigPath: path, OS: osInfo, Result: res})
+			_ = log.Write(logging.Entry{Timestamp: time.Now(), Command: "apply", Profile: cfg.Profile, ConfigPath: cfgPath, OS: osInfo, Result: res})
 		}
 		if err != nil {
 			return err
@@ -141,7 +146,7 @@ func applyCmd(streams IO) *cobra.Command {
 		fmt.Fprintf(streams.Out, "applied %d steps; log: %s\n", len(results), log.Path)
 		return nil
 	}}
-	cmd.Flags().StringVar(&path, "config", "", "config file")
+	cmd.Flags().StringVar(&path, "config", "", "config file (defaults to servy.yml, servy.yaml, .servy.yml)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show plan without changing the system")
 	cmd.Flags().BoolVar(&yes, "yes", false, "apply non-dangerous confirmed plan")
 	return cmd
@@ -205,9 +210,50 @@ func initCmd(streams IO) *cobra.Command {
 }
 
 func statusCmd(streams IO) *cobra.Command {
-	return &cobra.Command{Use: "status", Short: "Show read-only status summary", RunE: func(cmd *cobra.Command, args []string) error {
-		return doctorCmd(streams).RunE(cmd, args)
+	var path string
+	cmd := &cobra.Command{Use: "status", Args: cobra.NoArgs, Short: "Show server and configured module state", RunE: func(cmd *cobra.Command, args []string) error {
+		osInfo, err := platform.Detect()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(streams.Out, "host: %s %s (%s, %s)\n", osInfo.ID, osInfo.VersionID, osInfo.DockerCodename(), osInfo.Arch)
+		if ok, reason := osInfo.Supported(); ok {
+			fmt.Fprintln(streams.Out, "platform: supported")
+		} else {
+			fmt.Fprintf(streams.Out, "platform: unsupported - %s\n", reason)
+		}
+
+		loaded, err := loadConfig(path, "")
+		if err != nil {
+			var notFound defaultConfigError
+			if path == "" && errors.As(err, &notFound) {
+				fmt.Fprintf(streams.Out, "config: not found (%s)\n", notFound.Error())
+				return nil
+			}
+			return err
+		}
+		fmt.Fprintf(streams.Out, "config: %s\n", loaded.Path)
+		fmt.Fprintf(streams.Out, "profile: %s\n", loaded.Config.Profile)
+
+		p := modules.Build(modules.Context{Config: loaded.Config, OS: osInfo, State: system.RealState{}, BinaryPath: executablePath()})
+		counts := map[plan.Status]int{}
+		for _, step := range p.Steps {
+			counts[step.Status]++
+		}
+		fmt.Fprintf(streams.Out, "steps: will_run=%d already_ok=%d will_skip=%d needs_confirmation=%d failed_precondition=%d unsupported=%d\n", counts[plan.WillRun], counts[plan.AlreadyOK], counts[plan.WillSkip], counts[plan.NeedsConfirmation], counts[plan.FailedPrecondition], counts[plan.Unsupported])
+		for _, name := range modules.ModuleNames() {
+			moduleCounts := map[plan.Status]int{}
+			for _, step := range p.Steps {
+				if step.Module == name {
+					moduleCounts[step.Status]++
+				}
+			}
+			fmt.Fprintf(streams.Out, "module %s: will_run=%d already_ok=%d will_skip=%d needs_confirmation=%d failed_precondition=%d\n", name, moduleCounts[plan.WillRun], moduleCounts[plan.AlreadyOK], moduleCounts[plan.WillSkip], moduleCounts[plan.NeedsConfirmation], moduleCounts[plan.FailedPrecondition])
+		}
+		return nil
 	}}
+	cmd.Flags().StringVar(&path, "config", "", "config file (defaults to servy.yml, servy.yaml, .servy.yml)")
+	return cmd
 }
 
 func logsCmd(streams IO) *cobra.Command {
@@ -225,7 +271,7 @@ func moduleCmd(streams IO) *cobra.Command {
 	}})
 	var configPath string
 	status := &cobra.Command{Use: "status <name>", Args: cobra.ExactArgs(1), Short: "Show module plan status", RunE: func(cmd *cobra.Command, args []string) error {
-		p, err := loadPlan(configPath)
+		p, err := loadPlan(configPath, "")
 		if err != nil {
 			return err
 		}
@@ -236,9 +282,102 @@ func moduleCmd(streams IO) *cobra.Command {
 		}
 		return nil
 	}}
-	status.Flags().StringVar(&configPath, "config", "", "config file")
+	status.Flags().StringVar(&configPath, "config", "", "config file (defaults to servy.yml, servy.yaml, .servy.yml)")
 	root.AddCommand(status)
 	return root
+}
+
+func updateCmd(streams IO) *cobra.Command {
+	var repo, version, installDir string
+	cmd := &cobra.Command{Use: "update", Args: cobra.NoArgs, Short: "Download and install the latest Servy release", RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		res, err := update.Install(ctx, update.Options{Repo: repo, Version: version, CurrentVersion: app.Version, InstallDir: installDir, BinaryName: app.BinaryName})
+		if err != nil {
+			return err
+		}
+		if !res.Updated {
+			fmt.Fprintf(streams.Out, "%s is already up to date (%s)\n", app.BinaryName, res.Version)
+			return nil
+		}
+		fmt.Fprintf(streams.Out, "updated %s to %s at %s\n", app.BinaryName, res.Version, res.Path)
+		return nil
+	}}
+	cmd.PersistentFlags().StringVar(&repo, "repo", "vend1k12/servy", "GitHub repository owner/name")
+	cmd.Flags().StringVar(&version, "version", "", "release tag to install (defaults to latest)")
+	cmd.Flags().StringVar(&installDir, "install-dir", "", "directory to install into (defaults to current executable directory)")
+
+	check := &cobra.Command{Use: "check", Args: cobra.NoArgs, Short: "Check whether a newer Servy release exists", RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		res, err := update.Check(ctx, update.Options{Repo: repo, CurrentVersion: app.Version})
+		if err != nil {
+			return err
+		}
+		if res.UpdateAvailable {
+			fmt.Fprintf(streams.Out, "update available: %s -> %s\n", res.CurrentVersion, res.LatestVersion)
+			if res.ReleaseURL != "" {
+				fmt.Fprintf(streams.Out, "%s\n", res.ReleaseURL)
+			}
+			return nil
+		}
+		fmt.Fprintf(streams.Out, "%s is up to date (%s)\n", app.BinaryName, res.LatestVersion)
+		return nil
+	}}
+	cmd.AddCommand(check)
+	return cmd
+}
+
+func completionCmd(streams IO) *cobra.Command {
+	var printScript bool
+	var yes bool
+	var outputPath string
+	root := &cobra.Command{Use: "completion", Short: "Install or print shell completion"}
+	bash := &cobra.Command{Use: "bash", Args: cobra.NoArgs, Short: "Install bash completion", RunE: func(cmd *cobra.Command, args []string) error {
+		var script bytes.Buffer
+		if err := cmd.Root().GenBashCompletion(&script); err != nil {
+			return err
+		}
+		if printScript {
+			_, err := streams.Out.Write(script.Bytes())
+			return err
+		}
+		path := outputPath
+		if path == "" {
+			path = defaultBashCompletionPath()
+		}
+		if !yes {
+			reader := bufio.NewReader(streams.In)
+			if !askBool(reader, streams.Out, "Install bash completion to "+path+"?", true) {
+				fmt.Fprintln(streams.Out, "completion install cancelled")
+				return nil
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, script.Bytes(), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(streams.Out, "installed bash completion: %s\n", path)
+		fmt.Fprintln(streams.Out, "open a new shell or source your bash completion files to activate it")
+		return nil
+	}}
+	bash.Flags().BoolVar(&printScript, "print", false, "print completion script instead of installing")
+	bash.Flags().BoolVar(&yes, "yes", false, "install without prompting")
+	bash.Flags().StringVar(&outputPath, "output", "", "completion file to write")
+	root.AddCommand(bash)
+	return root
+}
+
+func defaultBashCompletionPath() string {
+	if os.Geteuid() == 0 {
+		return "/etc/bash_completion.d/servy"
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".local", "share", "bash-completion", "completions", "servy")
+	}
+	return filepath.Join(".", "servy.bash")
 }
 
 func internalCmd() *cobra.Command {
@@ -257,25 +396,79 @@ func internalCmd() *cobra.Command {
 	return root
 }
 
-func loadPlan(configPath string) (plan.Plan, error) {
-	_, _, p, err := loadPlanParts(configPath)
+var defaultConfigPaths = []string{"servy.yml", "servy.yaml", ".servy.yml"}
+
+type loadedConfig struct {
+	Config config.Config
+	Path   string
+}
+
+type defaultConfigError struct {
+	paths   []string
+	profile string
+}
+
+func (e defaultConfigError) Error() string {
+	profile := e.profile
+	if profile == "" {
+		profile = "docker-only"
+	}
+	return "no config file found (looked for " + strings.Join(e.paths, ", ") + "); run `servy init --profile " + profile + " --output servy.yml` or pass --config <file>"
+}
+
+func profileArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
+func loadPlan(configPath, requestedProfile string) (plan.Plan, error) {
+	_, _, _, p, err := loadPlanParts(configPath, requestedProfile)
 	return p, err
 }
 
-func loadPlanParts(configPath string) (config.Config, platform.Info, plan.Plan, error) {
-	if configPath == "" {
-		return config.Config{}, platform.Info{}, plan.Plan{}, fmt.Errorf("--config is required")
-	}
-	cfg, err := config.LoadFile(configPath)
+func loadPlanParts(configPath, requestedProfile string) (config.Config, string, platform.Info, plan.Plan, error) {
+	loaded, err := loadConfig(configPath, requestedProfile)
 	if err != nil {
-		return config.Config{}, platform.Info{}, plan.Plan{}, err
+		return config.Config{}, "", platform.Info{}, plan.Plan{}, err
 	}
 	osInfo, err := platform.Detect()
 	if err != nil {
-		return config.Config{}, platform.Info{}, plan.Plan{}, err
+		return config.Config{}, "", platform.Info{}, plan.Plan{}, err
 	}
-	p := modules.Build(modules.Context{Config: cfg, OS: osInfo, State: system.RealState{}, BinaryPath: executablePath()})
-	return cfg, osInfo, p, nil
+	p := modules.Build(modules.Context{Config: loaded.Config, OS: osInfo, State: system.RealState{}, BinaryPath: executablePath()})
+	return loaded.Config, loaded.Path, osInfo, p, nil
+}
+
+func loadConfig(configPath, requestedProfile string) (loadedConfig, error) {
+	path := configPath
+	if path == "" {
+		var found bool
+		for _, candidate := range defaultConfigPaths {
+			if _, err := os.Stat(candidate); err == nil {
+				path = candidate
+				found = true
+				break
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return loadedConfig{}, err
+			}
+		}
+		if !found {
+			return loadedConfig{}, defaultConfigError{paths: defaultConfigPaths, profile: requestedProfile}
+		}
+	}
+	cfg, err := config.LoadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return loadedConfig{}, fmt.Errorf("config file %q not found; run `servy init --output servy.yml` or pass an existing --config path", path)
+		}
+		return loadedConfig{}, err
+	}
+	if requestedProfile != "" && cfg.Profile != requestedProfile {
+		return loadedConfig{}, fmt.Errorf("config profile %q does not match requested profile %q", cfg.Profile, requestedProfile)
+	}
+	return loadedConfig{Config: cfg, Path: path}, nil
 }
 
 func executablePath() string {
