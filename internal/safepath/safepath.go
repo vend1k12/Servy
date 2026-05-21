@@ -61,6 +61,16 @@ func verifyExecutable(path string) (string, error) {
 	if err := verifyRootOwned(path); err != nil {
 		return "", err
 	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
+		if err := verifyRootOwned(resolved); err != nil {
+			return "", err
+		}
+		for dir := filepath.Dir(resolved); dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+			if err := verifyRootOwned(dir); err != nil {
+				return "", err
+			}
+		}
+	}
 	for dir := filepath.Dir(path); dir != "/" && dir != "."; dir = filepath.Dir(dir) {
 		if err := verifyRootOwned(dir); err != nil {
 			return "", err
@@ -74,7 +84,7 @@ func verifyRootOwned(path string) error {
 	if err != nil {
 		return err
 	}
-	if st.Mode()&0o022 != 0 {
+	if st.Mode()&os.ModeSymlink == 0 && st.Mode()&0o022 != 0 {
 		return fmt.Errorf("unsafe writable path component %s", path)
 	}
 	stat, ok := st.Sys().(*syscall.Stat_t)
