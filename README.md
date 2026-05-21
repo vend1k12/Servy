@@ -87,18 +87,18 @@ Create a config interactively:
 ./servy init --output servy.yml
 ```
 
-Validate and preview:
+Validate and preview (Servy auto-discovers `servy.yml`, `servy.yaml`, then `.servy.yml` in the current directory):
 
 ```sh
-./servy validate --config servy.yml
-./servy plan --config servy.yml
-./servy apply --config servy.yml --dry-run
+./servy validate
+./servy plan
+./servy apply --dry-run
 ```
 
 Apply after reviewing the plan:
 
 ```sh
-sudo ./servy apply --config servy.yml --yes
+sudo ./servy apply --yes
 ```
 
 `--yes` only acknowledges a reviewed non-dangerous plan. Dangerous actions still require explicit YAML confirmations.
@@ -125,21 +125,34 @@ curl -fsSL https://raw.githubusercontent.com/vend1k12/servy/main/install.sh | sh
 
 For production use, prefer downloading a tagged release and verifying checksums manually until the first signed public release is published.
 
+Update an installed binary:
+
+```sh
+servy update check
+sudo servy update
+```
+
 ## Commands
 
 | Command | Purpose | Mutates host? |
 | --- | --- | --- |
-| `servy doctor` | Read-only host diagnostics | No |
+| `servy doctor` | Read-only prerequisite, compatibility, DNS/network, and fix-hint diagnostics | No |
+| `servy status` | Read-only host/config/module state summary | No |
 | `servy init` | Interactive config wizard | Writes local YAML only |
-| `servy validate --config servy.yml` | Strict YAML validation | No |
-| `servy plan --config servy.yml` | Build execution plan | No |
-| `servy apply --config servy.yml --dry-run` | Print apply plan | No |
-| `servy apply --config servy.yml --yes` | Execute eligible steps | Yes |
-| `servy status` | Read-only status summary | No |
+| `servy validate [profile]` | Strict YAML validation using `--config` or default config discovery | No |
+| `servy plan [profile]` | Build and print execution plan using `--config` or default config discovery | No |
+| `servy apply [profile] --dry-run` | Print apply plan | No |
+| `servy apply [profile] --yes` | Execute eligible steps | Yes |
+| `servy update check` | Check the latest GitHub Release for a newer CLI | No |
+| `servy update` | Download, verify, and install the latest GitHub Release CLI binary | Replaces the Servy binary |
+| `servy completion bash` | Interactively install Bash completion | Writes a completion file |
+| `servy completion bash --print` | Print Bash completion script for manual installation | No |
 | `servy module list` | List built-in modules | No |
-| `servy module status <name> --config servy.yml` | Show module plan entries | No |
+| `servy module status <name>` | Show module plan entries | No |
 | `servy logs` | Print log directory | No |
 | `servy version` | Print version metadata | No |
+
+`validate`, `plan`, `apply`, `status`, and `module status` search `servy.yml`, `servy.yaml`, and `.servy.yml` when `--config` is omitted. A positional profile such as `servy apply base` verifies that the discovered config's `profile` matches before planning or applying.
 
 ## Profiles
 

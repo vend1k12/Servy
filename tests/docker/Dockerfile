@@ -21,3 +21,4 @@ RUN servy apply --config /examples/docker-only.yml --dry-run
 RUN servy apply --config /examples/node.yml --dry-run
 RUN servy module list
 RUN servy doctor
+RUN servy status --config /examples/base.yml

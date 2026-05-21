@@ -14,6 +14,7 @@ cmd/servy/main.go
       -> internal/runner
       -> internal/logging
       -> internal/doctor
+      -> internal/update
 ```
 
 ## Module contract
@@ -56,6 +57,8 @@ Modules must not directly execute commands. They only produce `plan.Step` values
 - Docker and Caddy use official apt repository flows, not remote convenience scripts.
 - User-level tools (`nvm`, `pnpm`, `bun`) use explicit official URLs and run as the selected target user.
 - Future hardening should reduce shell usage further by moving file writes into Go.
+
+`servy update` is intentionally separate from host setup modules: it downloads GitHub Release assets, verifies `checksums.txt`, extracts an archive containing only the `servy` binary, and atomically replaces the target binary.
 
 ## Logging
 

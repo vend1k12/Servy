@@ -21,9 +21,10 @@ For each:
 
 ```sh
 servy doctor
-servy validate --config examples/base.yml
-servy apply --config examples/base.yml --dry-run
-servy apply --config examples/docker-only.yml --dry-run
+servy validate base --config examples/base.yml
+servy apply base --config examples/base.yml --dry-run
+servy apply docker-only --config examples/docker-only.yml --dry-run
+servy update check
 ```
 
 Then run mutating tests in snapshots only:
@@ -42,7 +43,7 @@ Then run mutating tests in snapshots only:
 3. Add integration tests for `safeops.AppendAuthorizedKey` in a Linux container.
 4. Add `servy doctor --json` for issue reports and automation.
 5. Add JSON output for `plan` to support CI policy checks.
-6. Add shell completions after CLI stabilizes.
+6. Add zsh/fish/powershell completion installers after CLI usage stabilizes.
 7. Add release artifact signing with a maintainer-controlled public key before recommending `install.sh` for production.
 
 ## Issue labels
