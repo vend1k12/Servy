@@ -32,8 +32,8 @@ type Step struct {
 }
 
 type Plan struct {
-	Profile string
-	Steps   []Step
+	Profile string `json:"profile"`
+	Steps   []Step `json:"steps"`
 }
 
 func (p *Plan) Add(step Step) {

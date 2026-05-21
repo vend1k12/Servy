@@ -17,6 +17,14 @@ cmd/servy/main.go
       -> internal/update
 ```
 
+## Config generation vs runtime config
+
+`servy init` is a local YAML writer, not part of the apply path. Presets such as `base`, `docker-only`, and `node` are generation-time templates that produce ordinary config files; they are not alternate runtime schemas and do not bypass validation.
+
+Custom init mode should enumerate the module options exposed by the current strict config schema and write the selected values into YAML. Confirmation fields remain explicit and safe by default, so generated configs still rely on `validate`, `plan`, `apply --dry-run`, and a reviewed `apply --yes` before anything mutates the host.
+
+`plan --json` and `doctor --json` are read-only machine-output modes over the same planning and diagnostics data used by the human-readable commands.
+
 ## Module contract
 
 Each module implements:
@@ -66,7 +74,7 @@ Mutating `apply` runs write JSONL logs under `/var/log/servy/` with timestamp, c
 
 ## Safety invariants
 
-- `init` writes YAML and previews; it never silently configures the host.
+- `init` writes generated YAML and previews; it never silently configures the host.
 - `plan` and `apply --dry-run` never mutate.
 - `--yes` is not a dangerous-action override.
 - UFW enablement requires an SSH allow step in the same plan plus explicit confirmation.

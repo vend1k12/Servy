@@ -12,6 +12,17 @@ import (
 
 const SchemaVersion = "v1"
 
+type PresetInfo struct {
+	Name        string
+	Description string
+}
+
+var presetInfos = []PresetInfo{
+	{Name: "base", Description: "Minimal server baseline with safe disabled module defaults."},
+	{Name: "docker-only", Description: "Base defaults plus Docker and a deploy user for containerized deployments."},
+	{Name: "node", Description: "Docker defaults plus a deploy user and host Node.js tooling."},
+}
+
 type Config struct {
 	SchemaVersion string        `yaml:"schemaVersion"`
 	Profile       string        `yaml:"profile"`
@@ -116,6 +127,59 @@ func Default(profile string) Config {
 	cfg.Modules.Node.Version = "lts"
 	cfg.Runtime.LogDir = "/var/log/servy"
 	ApplyProfileDefaults(&cfg)
+	return cfg
+}
+
+func Presets() []PresetInfo {
+	out := make([]PresetInfo, len(presetInfos))
+	copy(out, presetInfos)
+	return out
+}
+
+func Preset(name string) (Config, bool) {
+	switch name {
+	case "base":
+		return basePreset(), true
+	case "docker-only":
+		return dockerOnlyPreset(), true
+	case "node":
+		return nodePreset(), true
+	default:
+		return Config{}, false
+	}
+}
+
+func basePreset() Config {
+	cfg := Default("base")
+	cfg.Modules.Docker = Docker{}
+	cfg.Modules.Caddy = Caddy{}
+	cfg.Modules.Firewall = Firewall{SSHPort: 22}
+	cfg.Modules.Swap = Swap{Size: "2G", Path: "/swapfile"}
+	cfg.Modules.DeployUser = DeployUser{}
+	cfg.Modules.Hardening = Hardening{}
+	cfg.Modules.Node = Node{}
+	return cfg
+}
+
+func dockerOnlyPreset() Config {
+	cfg := Default("docker-only")
+	cfg.Modules.Docker = Docker{Enabled: true, Channel: "stable"}
+	cfg.Modules.Caddy = Caddy{}
+	cfg.Modules.Firewall = Firewall{SSHPort: 22}
+	cfg.Modules.Swap = Swap{Enabled: true, Size: "2G", Path: "/swapfile"}
+	cfg.Modules.DeployUser = DeployUser{Enabled: true, Name: "deploy", Sudo: true}
+	cfg.Modules.Node = Node{}
+	return cfg
+}
+
+func nodePreset() Config {
+	cfg := Default("node")
+	cfg.Modules.Docker = Docker{Enabled: true, Channel: "stable"}
+	cfg.Modules.DeployUser = DeployUser{Enabled: true, Name: "deploy", Sudo: true}
+	cfg.Modules.Node = Node{Enabled: true, User: "deploy", Version: "lts", InstallPNPM: true}
+	cfg.Modules.Caddy = Caddy{}
+	cfg.Modules.Firewall = Firewall{SSHPort: 22}
+	cfg.Modules.Hardening = Hardening{Fail2Ban: true, UnattendedUpgrades: true}
 	return cfg
 }
 
