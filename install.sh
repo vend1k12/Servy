@@ -22,6 +22,7 @@ need curl
 need sha256sum
 need tar
 need grep
+need awk
 need id
 need install
 
@@ -49,9 +50,18 @@ fi
 
 curl -fsSL "$url" -o "$TMP/$asset"
 curl -fsSL "$sums" -o "$TMP/checksums.txt"
+
+# Extract the exact `<sha256>  <asset>` line. Free-form grep would ambiguously
+# match future sibling artifacts (for example `<asset>.sig`) or expansion in
+# `$asset` metacharacters, so we require an exact filename match.
+awk -v a="$asset" 'NF==2 && $2==a { print; found=1 } END { exit !found }' \
+    "$TMP/checksums.txt" > "$TMP/expected.sha" || {
+    echo "no sha256 entry for $asset in checksums.txt" >&2
+    exit 1
+}
 (
   cd "$TMP"
-  grep "  $asset\| $asset\|$asset" checksums.txt | sha256sum -c -
+  LC_ALL=C sha256sum -c expected.sha
 )
 
 members="$(tar -tzf "$TMP/$asset")"
