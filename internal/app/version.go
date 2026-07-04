@@ -1,3 +1,4 @@
+// Package app app carries build-time version metadata injected via -ldflags.
 package app
 
 const (

@@ -1,3 +1,4 @@
+// Package plan plan defines the typed execution plan Servy builds before apply.
 package plan
 
 import (

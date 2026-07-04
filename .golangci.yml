@@ -1,0 +1,78 @@
+version: "2"
+
+# Servy is a small tool, so keep the linter set focused and boring. Everything
+# below either catches real bugs (govet/staticcheck/errcheck), calls out
+# security issues Servy runs into as a root-privileged CLI (gosec), or enforces
+# small stylistic rules (revive/misspell/unused).
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+
+  settings:
+    errcheck:
+      # Ignoring errors from these functions is idiomatic in Go CLIs and
+      # defer-close patterns; noise here drowns real errcheck hits.
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net.Conn).Close
+        - os.Remove
+        - os.RemoveAll
+        - (*compress/gzip.Reader).Close
+        - (*compress/gzip.Writer).Close
+        - golang.org/x/sys/unix.Close
+
+    gosec:
+      # Servy is a root-privileged apt/systemd wrapper. Directory and file
+      # modes on apt keyrings, sources.list.d, and /var/log/servy are
+      # deliberately 0755 or 0644 because that is what apt+systemd expect;
+      # tightening them would break behaviour, not improve safety.
+      excludes:
+        - G204   # subprocess launched with variable — every module does this by design; safepath guards argv[0]
+        - G301   # directory permissions >0750 — apt/systemd paths need 0755
+        - G703   # path traversal via taint analysis — Servy's file paths are all internally derived
+        - G302   # file permissions >0600 — apt keyrings need 0644 to be world-readable
+        - G304   # file inclusion via variable — Servy reads user-supplied config/log paths on purpose
+        - G306   # WriteFile permissions >0600 — same reason as G302
+      confidence: medium
+
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+
+    staticcheck:
+      # QF1008: fine-grained embedded-field suggestion; Servy's boundedBuffer
+      # embeds bytes.Buffer intentionally to be explicit.
+      checks:
+        - all
+        - -QF1008
+
+  exclusions:
+    generated: lax
+    rules:
+      # Tests intentionally construct plans/configs that hit lint edges.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0

@@ -31,3 +31,23 @@ jobs:
           go-version: '1.26.3'
           cache: true
       - run: tests/docker/run.sh
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.3'
+          cache: true
+      - name: Install pinned golangci-lint
+        env:
+          GOLANGCI_LINT_VERSION: v2.12.2
+        run: |
+          set -eu
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+      - name: Run golangci-lint
+        run: |
+          set -eu
+          GOPATH_DIR="$(go env GOPATH)"
+          "$GOPATH_DIR/bin/golangci-lint" run --config .golangci.yml ./...

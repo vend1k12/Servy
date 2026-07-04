@@ -1,3 +1,4 @@
+// Package platform platform detects OS, codename, arch, and SSH ports.
 package platform
 
 import (

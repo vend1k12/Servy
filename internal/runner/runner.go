@@ -1,3 +1,4 @@
+// Package runner runner executes will_run plan steps with bounded output.
 package runner
 
 import (

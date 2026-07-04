@@ -1,3 +1,4 @@
+// Package logging logging writes JSONL apply-run audit logs under /var/log/servy.
 package logging
 
 import (
