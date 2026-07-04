@@ -16,6 +16,10 @@ type State interface {
 	GroupContainsUser(group, username string) bool
 	SwapActive() bool
 	ServiceActive(name string) bool
+	// AptPackagesInstalled reports which of the given apt package names are
+	// currently installed. Missing entries mean "not installed" (or unknown to
+	// dpkg on this host). One batched dpkg-query per call.
+	AptPackagesInstalled(names []string) map[string]bool
 }
 
 type RealState struct{}
@@ -73,4 +77,31 @@ func (RealState) ServiceActive(name string) bool {
 	}
 	cmd := exec.Command(systemctl, "is-active", "--quiet", name)
 	return cmd.Run() == nil
+}
+
+func (RealState) AptPackagesInstalled(names []string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	if len(names) == 0 {
+		return out
+	}
+	dpkg, err := safepath.LookPath("dpkg-query")
+	if err != nil {
+		return out // no dpkg (not an apt host) — treat everything as unknown/missing.
+	}
+	args := append([]string{"-W", "-f", "${Package} ${db:Status-Status}\n"}, names...)
+	cmd := exec.Command(dpkg, args...)
+	// dpkg-query exits non-zero when any requested package is unknown to dpkg.
+	// The stdout still contains rows for the ones it does know about, which is
+	// exactly what we want. Discard stderr and the exit code.
+	stdout, _ := cmd.Output()
+	for _, line := range strings.Split(string(stdout), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		if fields[1] == "installed" {
+			out[fields[0]] = true
+		}
+	}
+	return out
 }
