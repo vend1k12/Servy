@@ -1,0 +1,36 @@
+schemaVersion: v1
+profile: web-app
+modules:
+  docker:
+    enabled: true
+    channel: stable
+    addDeployUserToGroup: false
+  deployUser:
+    enabled: true
+    name: deploy
+    sshAuthorizedKeys: []
+    sudo: true
+    groups: []
+  node:
+    enabled: true
+    user: deploy
+    version: lts
+    installPNPM: true
+    installBun: false
+  caddy:
+    mode: none
+  firewall:
+    enabled: false
+    sshPort: 22
+  hardening:
+    fail2ban: true
+    unattendedUpgrades: true
+    basicSysctl: false
+    disableRootSSHLogin: false
+    disablePasswordAuth: false
+    restrictSSHUsers: false
+confirmations:
+  installUserTooling: false
+  dockerGroupRootEquivalent: false
+runtime:
+  logDir: /var/log/servy

@@ -204,7 +204,7 @@ func TestInitPresetWritesValidConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Profile != "node" || !cfg.Modules.Node.Enabled || cfg.Modules.Node.User == "" {
+	if cfg.Profile != "web-app" || !cfg.Modules.Node.Enabled || cfg.Modules.Node.User == "" {
 		t.Fatalf("node preset config = %#v", cfg)
 	}
 }

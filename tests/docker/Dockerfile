@@ -15,11 +15,13 @@ RUN servy version
 RUN servy validate --config /examples/base.yml
 RUN servy validate --config /examples/docker-only.yml
 RUN servy validate --config /examples/node.yml
+RUN servy validate --config /examples/web-app.yml
 RUN servy plan --config /examples/base.yml
 RUN servy plan --config /examples/base.yml --json
 RUN servy apply --config /examples/base.yml --dry-run
 RUN servy apply --config /examples/docker-only.yml --dry-run
 RUN servy apply --config /examples/node.yml --dry-run
+RUN servy apply --config /examples/web-app.yml --dry-run
 RUN servy module list
 RUN servy doctor
 RUN servy doctor --json

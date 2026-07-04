@@ -206,7 +206,7 @@ sudo servy update --require-cosign  # refuse to update without a valid signature
 | `servy init --list-presets` | You want to see the built-in generation templates. |
 | `servy init --preset base --output servy.yml` | You want minimal server prep YAML. |
 | `servy init --preset docker-only --output servy.yml` | You want base setup plus Docker YAML. |
-| `servy init --preset node --output servy.yml` | You want Docker plus optional host-level JavaScript tooling YAML. |
+| `servy init --preset web-app --output servy.yml` | You want Docker plus optional host-level JavaScript tooling YAML. `node` is accepted as an alias. |
 | `servy init --custom --output servy.yml` | You want the wizard to ask about each module option exposed by the current config schema. |
 
 Presets are generation-time shortcuts only. They write ordinary strict-schema YAML that still goes through the normal `validate`, `plan`, `apply --dry-run`, and explicit `apply --yes` flow. After reviewing the plan for a generated config, apply it the same way as any hand-written config: `sudo servy apply --config servy.yml --yes`. Custom mode is for tailoring module options up front; lockout-risk and privilege-escalating actions still require explicit confirmation fields and default to safe values.
@@ -236,7 +236,7 @@ Everything in `base`, plus Docker Engine for containerized deployments:
 
 Servy does not install Docker Desktop, Docker via snap, Docker convenience scripts, or Compose v1.
 
-### `node`
+### `web-app`
 
 Everything in `docker-only`, plus optional host-level JavaScript tooling for projects that need non-containerized processes:
 
@@ -245,7 +245,25 @@ Everything in `docker-only`, plus optional host-level JavaScript tooling for pro
 - pnpm through Corepack;
 - optional Bun.
 
-The `node` profile is intentionally not the default. Docker-only hosts usually do not need host-level Node tooling.
+The `web-app` profile is intentionally not the default. Docker-only hosts usually do not need host-level Node tooling.
+
+`node` remains as a deprecated alias for `web-app` so existing configs and scripts keep working. `servy init --preset node` writes a config with `profile: web-app`.
+
+### Customising `base`
+
+Every profile includes the `base` module. You can override its default package set:
+
+```yaml
+modules:
+  base:
+    packages: [ca-certificates, curl, gnupg, lsb-release, apt-transport-https, git, vim]
+    tools:
+      nano: false        # drop nano from the curated default set
+      htop: false
+    installGitHubCLI: false   # skip the official gh apt repository
+```
+
+`packages` (when set) replaces the curated default set. `tools` toggles individual entries within the default set. `installGitHubCLI: false` skips the entire `cli.github.com` apt-repository flow.
 
 ## Safety model
 
@@ -296,7 +314,8 @@ More examples:
 
 - [`examples/base.yml`](examples/base.yml)
 - [`examples/docker-only.yml`](examples/docker-only.yml)
-- [`examples/node.yml`](examples/node.yml)
+- [`examples/web-app.yml`](examples/web-app.yml)
+- [`examples/node.yml`](examples/node.yml) (deprecated alias for `web-app`)
 
 ## Plan output example
 
