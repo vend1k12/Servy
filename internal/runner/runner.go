@@ -65,8 +65,8 @@ func (CommandRunner) Run(ctx context.Context, step plan.Step) Result {
 }
 
 func Apply(ctx context.Context, p plan.Plan, r Runner) ([]Result, error) {
-	for _, step := range p.Blocking() {
-		return nil, fmt.Errorf("plan has blocking step %q with status %s", step.ID, step.Status)
+	if blockers := p.Blocking(); len(blockers) > 0 {
+		return nil, &plan.BlockingError{Blockers: blockers}
 	}
 	var results []Result
 	for _, step := range p.Steps {

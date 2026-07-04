@@ -156,10 +156,7 @@ func applyCmd(streams IO) *cobra.Command {
 			return nil
 		}
 		if !yes {
-			return fmt.Errorf("refusing to apply without --yes after plan review")
-		}
-		if blockers := p.Blocking(); len(blockers) > 0 {
-			return fmt.Errorf("plan contains blocking step %q with status %s; update config confirmations or options", blockers[0].ID, blockers[0].Status)
+			return errors.New("refusing to apply without --yes. Review the plan above, then re-run with --yes to execute non-dangerous steps. --yes never overrides confirmations.* — see docs/architecture.md#safety-invariants.")
 		}
 		log, err := logging.Open(cfg.Runtime.LogDir)
 		if err != nil {

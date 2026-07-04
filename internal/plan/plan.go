@@ -82,3 +82,31 @@ func shellQuote(args []string) string {
 	}
 	return b.String()
 }
+
+// BlockingError is returned when a plan cannot be applied because one or more
+// steps have a blocking status. It exposes every blocker so operators see the
+// full picture in one message, not just the first hit.
+type BlockingError struct {
+	Blockers []Step
+}
+
+func (e *BlockingError) Error() string {
+	if len(e.Blockers) == 0 {
+		return "plan has blocking steps"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "cannot apply plan: %d blocking step(s)\n", len(e.Blockers))
+	for _, s := range e.Blockers {
+		fmt.Fprintf(&b, "  [%s] %s: %s\n", s.Status, s.ID, s.Description)
+		if s.Confirmation != "" {
+			fmt.Fprintf(&b, "      set `%s: true` in your config to allow this step\n", s.Confirmation)
+		}
+		if s.Rationale != "" {
+			fmt.Fprintf(&b, "      why: %s\n", s.Rationale)
+		}
+		if s.RollbackHint != "" {
+			fmt.Fprintf(&b, "      recovery: %s\n", s.RollbackHint)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
