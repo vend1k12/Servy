@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/vend1k12/servy/internal/config"
@@ -15,6 +16,7 @@ type fakeState struct {
 	groups   map[string]map[string]bool
 	swap     bool
 	services map[string]bool
+	apt      map[string]bool
 }
 
 func (f fakeState) CommandExists(name string) bool                { return f.commands[name] }
@@ -23,6 +25,15 @@ func (f fakeState) UserExists(name string) bool                   { return f.use
 func (f fakeState) GroupContainsUser(group, username string) bool { return f.groups[group][username] }
 func (f fakeState) SwapActive() bool                              { return f.swap }
 func (f fakeState) ServiceActive(name string) bool                { return f.services[name] }
+func (f fakeState) AptPackagesInstalled(names []string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		if f.apt[n] {
+			out[n] = true
+		}
+	}
+	return out
+}
 
 func supportedOS() platform.Info {
 	return platform.Info{ID: "ubuntu", VersionID: "24.04", VersionCodename: "noble", UbuntuCodename: "noble", Arch: "amd64", PackageManager: "apt", HasSystemd: true, IsRoot: true, HasSudo: true}
@@ -48,6 +59,57 @@ func TestBaseSkipsGitHubCLIRepoWhenPresent(t *testing.T) {
 	assertStep(t, p, "base.gh.present", plan.AlreadyOK)
 	if findStep(p, "base.gh.install") != nil {
 		t.Fatal("existing GitHub CLI should not be reinstalled")
+	}
+}
+
+func TestBaseMarksInstalledPackagesAsAlreadyOK(t *testing.T) {
+	cfg := config.Default("base")
+	// Simulate every hardcoded base package already installed via apt.
+	allInstalled := map[string]bool{}
+	for _, p := range []string{"ca-certificates", "curl", "gnupg", "lsb-release", "apt-transport-https", "git", "unzip", "jq", "htop", "tmux", "rsync", "nano"} {
+		allInstalled[p] = true
+	}
+	p := Build(Context{
+		Config: cfg,
+		OS:     supportedOS(),
+		State:  fakeState{commands: map[string]bool{"gh": true}, apt: allInstalled, services: map[string]bool{}},
+	})
+	assertStep(t, p, "base.packages.present", plan.AlreadyOK)
+	if findStep(p, "base.apt.update") != nil {
+		t.Fatal("apt-get update must be skipped when nothing needs installing")
+	}
+	if findStep(p, "base.packages") != nil {
+		t.Fatal("apt-get install must be skipped when everything is already installed")
+	}
+}
+
+func TestBaseInstallsOnlyMissingPackages(t *testing.T) {
+	cfg := config.Default("base")
+	// Simulate two packages missing.
+	installed := map[string]bool{}
+	for _, p := range []string{"ca-certificates", "curl", "gnupg", "lsb-release", "apt-transport-https", "git", "unzip", "jq", "htop", "rsync"} {
+		installed[p] = true
+	}
+	p := Build(Context{
+		Config: cfg,
+		OS:     supportedOS(),
+		State:  fakeState{commands: map[string]bool{"gh": true}, apt: installed, services: map[string]bool{}},
+	})
+	step := findStep(p, "base.packages")
+	if step == nil {
+		t.Fatal("base.packages missing")
+	}
+	// argv is [apt-get install -y <missing…>]. Only tmux + nano should be there.
+	got := strings.Join(step.Command, " ")
+	for _, m := range []string{"tmux", "nano"} {
+		if !strings.Contains(got, " "+m) {
+			t.Errorf("expected missing package %s in install cmd, got %q", m, got)
+		}
+	}
+	for _, present := range []string{"curl", "jq", "htop"} {
+		if strings.Contains(got, " "+present+" ") || strings.HasSuffix(got, " "+present) {
+			t.Errorf("already-installed package %s must not appear in install cmd: %q", present, got)
+		}
 	}
 }
 

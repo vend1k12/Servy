@@ -53,10 +53,25 @@ type Base struct{}
 
 func (Base) Name() string { return "base" }
 func (Base) Plan(ctx Context) []plan.Step {
-	steps := []plan.Step{
-		{ID: "base.apt.update", Module: "base", Description: "update apt package index", Status: plan.WillRun, Command: []string{"apt-get", "update"}},
-		{ID: "base.packages", Module: "base", Description: "install base server packages", Status: plan.WillRun, Command: []string{"apt-get", "install", "-y", "ca-certificates", "curl", "gnupg", "lsb-release", "apt-transport-https", "git", "unzip", "jq", "htop", "tmux", "rsync", "nano"}},
+	basePkgs := []string{"ca-certificates", "curl", "gnupg", "lsb-release", "apt-transport-https", "git", "unzip", "jq", "htop", "tmux", "rsync", "nano"}
+	installed := ctx.State.AptPackagesInstalled(basePkgs)
+	var missing []string
+	for _, p := range basePkgs {
+		if !installed[p] {
+			missing = append(missing, p)
+		}
 	}
+
+	var steps []plan.Step
+	if len(missing) == 0 {
+		steps = append(steps, plan.Step{ID: "base.packages.present", Module: "base", Description: "base server packages already installed", Status: plan.AlreadyOK})
+	} else {
+		steps = append(steps,
+			plan.Step{ID: "base.apt.update", Module: "base", Description: "update apt package index", Status: plan.WillRun, Command: []string{"apt-get", "update"}},
+			plan.Step{ID: "base.packages", Module: "base", Description: fmt.Sprintf("install %d missing base server package(s)", len(missing)), Status: plan.WillRun, Command: append([]string{"apt-get", "install", "-y"}, missing...)},
+		)
+	}
+
 	if ctx.State.CommandExists("gh") {
 		return append(steps, plan.Step{ID: "base.gh.present", Module: "base", Description: "GitHub CLI is already installed", Status: plan.AlreadyOK, Command: []string{"gh", "--version"}})
 	}
