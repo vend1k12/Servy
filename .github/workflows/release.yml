@@ -21,15 +21,15 @@ jobs:
           git fetch --depth 1 origin "$GITHUB_SHA"
           git checkout --detach "$GITHUB_SHA"
       - name: Verify Go toolchain
-        run: GOTOOLCHAIN=go1.26.3 go version
-      - run: GOTOOLCHAIN=go1.26.3 go test ./...
-      - run: GOTOOLCHAIN=go1.26.3 go vet ./...
+        run: GOTOOLCHAIN=go1.26.4 go version
+      - run: GOTOOLCHAIN=go1.26.4 go test ./...
+      - run: GOTOOLCHAIN=go1.26.4 go vet ./...
       - name: govulncheck
-        run: GOTOOLCHAIN=go1.26.3 go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: GOTOOLCHAIN=go1.26.4 go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       - name: Build artifacts
         run: |
           set -eu
-          export GOTOOLCHAIN=go1.26.3
+          export GOTOOLCHAIN=go1.26.4
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
           BUILD_DATE="$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ)"

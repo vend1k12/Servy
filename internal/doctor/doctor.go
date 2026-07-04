@@ -83,6 +83,12 @@ func diskStatus() (bool, string) {
 	if err := syscall.Statfs("/", &s); err != nil {
 		return false, err.Error()
 	}
+	// s.Bsize is signed on Linux (int64 on amd64, int32 on 32-bit archs).
+	// A non-positive block size would be a kernel bug; refuse to fabricate a
+	// disk-usage number from it instead of doing a hostile int -> uint cast.
+	if s.Bsize <= 0 {
+		return false, fmt.Sprintf("statfs reported non-positive block size %d", s.Bsize)
+	}
 	blockSize := uint64(s.Bsize)
 	free := s.Bavail * blockSize
 	total := s.Blocks * blockSize
