@@ -13,3 +13,6 @@ servy.yml
 .DS_Store
 .idea/
 .vscode/
+
+# Agent audit artifacts (session-local)
+.rpiv/
