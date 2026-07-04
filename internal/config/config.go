@@ -1,3 +1,4 @@
+// Package config config models Servy's strict YAML config, presets, and validation.
 package config
 
 import (

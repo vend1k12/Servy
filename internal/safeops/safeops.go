@@ -1,3 +1,4 @@
+// Package safeops safeops holds file-system operations that need atomic, symlink-safe semantics.
 package safeops
 
 import (

@@ -1,3 +1,4 @@
+// Package system system exposes an interface over host state so modules stay pure.
 package system
 
 import (

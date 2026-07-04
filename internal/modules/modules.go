@@ -1,3 +1,4 @@
+// Package modules modules holds the idempotent planners each Servy module registers.
 package modules
 
 import (

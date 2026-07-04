@@ -1,3 +1,4 @@
+// Package update update downloads, verifies, and installs signed Servy release archives.
 package update
 
 import (

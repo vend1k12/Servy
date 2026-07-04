@@ -1,3 +1,4 @@
+// Package doctor doctor runs read-only host diagnostics before any mutation.
 package doctor
 
 import (
@@ -62,7 +63,7 @@ func tcpOK(addr string) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 

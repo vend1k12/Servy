@@ -1,3 +1,4 @@
+// Package safepath safepath restricts argv[0] resolution to root-owned system paths.
 package safepath
 
 import (

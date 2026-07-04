@@ -1,3 +1,4 @@
+// Package cli cli wires the Cobra command tree for the servy binary.
 package cli
 
 import (
@@ -156,13 +157,13 @@ func applyCmd(streams IO) *cobra.Command {
 			return nil
 		}
 		if !yes {
-			return errors.New("refusing to apply without --yes. Review the plan above, then re-run with --yes to execute non-dangerous steps. --yes never overrides confirmations.* — see docs/architecture.md#safety-invariants.")
+			return errors.New("refusing to apply without --yes: review the plan above, then re-run with --yes to execute non-dangerous steps; --yes never overrides confirmations.* (see docs/architecture.md#safety-invariants)")
 		}
 		log, err := logging.Open(cfg.Runtime.LogDir)
 		if err != nil {
 			return fmt.Errorf("open log: %w", err)
 		}
-		defer log.Close()
+		defer func() { _ = log.Close() }()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		results, err := runner.Apply(ctx, p, runner.CommandRunner{})
