@@ -434,7 +434,16 @@ func internalCmd() *cobra.Command {
 		return safeops.WriteSSHDDropIn(line)
 	}}
 	writeSSH.Flags().StringVar(&line, "line", "", "single sshd directive")
-	root.AddCommand(appendKey, writeSSH)
+	var keyringURL, keyringDest, keyringFPR string
+	installKeyring := &cobra.Command{Use: "install-apt-keyring", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+		defer cancel()
+		return safeops.InstallAptKeyring(ctx, keyringURL, keyringDest, keyringFPR)
+	}}
+	installKeyring.Flags().StringVar(&keyringURL, "url", "", "HTTPS keyring URL")
+	installKeyring.Flags().StringVar(&keyringDest, "dest", "", "absolute destination path under /etc/apt/keyrings")
+	installKeyring.Flags().StringVar(&keyringFPR, "fingerprint", "", "expected GPG primary fingerprint (40 hex)")
+	root.AddCommand(appendKey, writeSSH, installKeyring)
 	return root
 }
 

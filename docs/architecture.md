@@ -63,6 +63,7 @@ Modules must not directly execute commands. They only produce `plan.Step` values
 - Prefer argv commands (`exec.CommandContext`) over shell strings.
 - Shell is allowed only where system tools require atomic redirection/appending; keep input fixed or safely quoted.
 - Docker and Caddy use official apt repository flows, not remote convenience scripts.
+- Apt keyrings are downloaded through `safeops.InstallAptKeyring`, which pins the primary GPG fingerprint. TLS is not sufficient trust for a keyring that authorises root packages.
 - User-level tools (`nvm`, `pnpm`, `bun`) use explicit official URLs and run as the selected target user.
 - Future hardening should reduce shell usage further by moving file writes into Go.
 
