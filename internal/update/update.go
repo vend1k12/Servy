@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -31,6 +32,14 @@ type Options struct {
 	OS             string
 	Arch           string
 	Client         *http.Client
+	// RequireCosign forces the update to fail when either cosign is not
+	// installed or the release does not ship signature/certificate assets.
+	// Default is best-effort: sha256 is always verified, cosign is verified
+	// when it is present.
+	RequireCosign bool
+	// Stderr collects human-readable notices (for example when cosign is
+	// skipped). Nil means silent.
+	Stderr io.Writer
 }
 
 type CheckResult struct {
@@ -122,6 +131,9 @@ func Install(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("download %s: %w", archiveName, err)
 	}
 	if err := verifySHA256(archiveBytes, expected, archiveName); err != nil {
+		return Result{}, err
+	}
+	if err := verifyCosign(ctx, opts, rel, archiveName, archiveBytes); err != nil {
 		return Result{}, err
 	}
 	binary, err := extractBinary(archiveBytes, binaryName)
@@ -322,4 +334,98 @@ func updateAvailable(current, latest string) bool {
 		return true
 	}
 	return current != latest
+}
+
+// verifyCosign runs cosign keyless verification against the archive when
+// cosign is available and the release ships the .sig + .pem assets. It is a
+// best-effort second trust anchor by default; set Options.RequireCosign to
+// hard-fail when the check cannot be performed.
+func verifyCosign(ctx context.Context, opts Options, rel release, archiveName string, archiveBytes []byte) error {
+	notice := func(format string, args ...any) {
+		if opts.Stderr == nil {
+			return
+		}
+		fmt.Fprintf(opts.Stderr, "cosign: "+format+"\n", args...)
+	}
+
+	cosignPath, cosignErr := exec.LookPath("cosign")
+	if cosignErr != nil {
+		if opts.RequireCosign {
+			return errors.New("RequireCosign is set but cosign is not installed on this host")
+		}
+		notice("cosign not installed; skipping signature verification")
+		return nil
+	}
+
+	sigAsset, sigOK := findAsset(rel.Assets, archiveName+".sig")
+	pemAsset, pemOK := findAsset(rel.Assets, archiveName+".pem")
+	if !sigOK || !pemOK {
+		if opts.RequireCosign {
+			return fmt.Errorf("RequireCosign is set but release %s does not ship signature files for %s", rel.TagName, archiveName)
+		}
+		notice("no signature published for %s yet", rel.TagName)
+		return nil
+	}
+
+	sigBytes, err := download(ctx, opts, sigAsset.BrowserDownloadURL)
+	if err != nil {
+		return fmt.Errorf("download cosign signature: %w", err)
+	}
+	pemBytes, err := download(ctx, opts, pemAsset.BrowserDownloadURL)
+	if err != nil {
+		return fmt.Errorf("download cosign certificate: %w", err)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "servy-cosign-*")
+	if err != nil {
+		return fmt.Errorf("cosign tempdir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	archivePath := filepath.Join(tmpDir, archiveName)
+	sigPath := filepath.Join(tmpDir, archiveName+".sig")
+	pemPath := filepath.Join(tmpDir, archiveName+".pem")
+	if err := os.WriteFile(archivePath, archiveBytes, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(sigPath, sigBytes, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(pemPath, pemBytes, 0o600); err != nil {
+		return err
+	}
+
+	repo := opts.Repo
+	if repo == "" {
+		repo = "vend1k12/servy"
+	}
+	identityRe := fmt.Sprintf(`^https://github\.com/%s/\.github/workflows/release\.yml@`, regexpQuoteMeta(repo))
+	cmd := exec.CommandContext(ctx, cosignPath, "verify-blob",
+		"--certificate", pemPath,
+		"--signature", sigPath,
+		"--certificate-identity-regexp", identityRe,
+		"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+		archivePath,
+	)
+	cmd.Env = append(os.Environ(), "COSIGN_EXPERIMENTAL=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cosign verify-blob failed: %v: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	notice("signature verified for %s", archiveName)
+	return nil
+}
+
+// regexpQuoteMeta mirrors regexp.QuoteMeta without importing the regexp
+// package (already avoided elsewhere in this file).
+func regexpQuoteMeta(s string) string {
+	const meta = `\.+*?()|[]{}^$`
+	var b strings.Builder
+	for _, r := range s {
+		if strings.ContainsRune(meta, r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
