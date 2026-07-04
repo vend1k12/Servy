@@ -18,6 +18,33 @@ Servy is a single-binary Go CLI that runs **inside** a server, detects the host,
 
 ---
 
+## Who Servy is for
+
+Servy is aimed at **solo developers and small teams** managing Ubuntu or Debian VPS hosts by hand. It also fits small production hosts, provided you accept the caveats in [Release status](#release-status) and read the [safety model](#safety-model).
+
+Use Servy if:
+
+- you SSH into your own server(s) and want repeatable setup without learning Ansible;
+- you want a clear plan and dry-run before anything mutates the host;
+- you want a single static Go binary instead of a runtime toolchain.
+
+Do not use Servy if:
+
+- you provision fleets from a laptop and want push-style SSH orchestration — reach for Ansible;
+- you provision fresh cloud VMs from image — cloud-init is a better fit;
+- your workflow depends on Fedora/Arch/Alpine — Servy is Ubuntu/Debian only.
+
+### How Servy compares
+
+| | Servy | ad-hoc bash | ansible-pull | cloud-init |
+| --- | --- | --- | --- | --- |
+| Install | one binary | copy/paste | Python + Ansible | baked into cloud image |
+| Dry-run before mutation | yes | no | limited | no |
+| Idempotent | yes | depends | yes | one-shot |
+| Runs on existing hosts | yes | yes | yes | no |
+| Learning curve | low | low | medium | medium |
+| Fleet from a laptop | no | no | yes | no |
+
 ## Why Servy exists
 
 Fresh VPS setup is usually a choice between a one-off shell script, hand-written notes, or a full configuration-management stack. Servy sits in the middle:
@@ -26,8 +53,6 @@ Fresh VPS setup is usually a choice between a one-off shell script, hand-written
 - smaller and more local than Ansible/Terraform;
 - safe enough to rerun;
 - explicit about dangerous operations before they happen.
-
-Servy is designed for personal servers, small production hosts, and repeatable developer infrastructure where you want a clear plan before touching SSH, firewall, Docker, users, or runtime tooling.
 
 ## What Servy does
 
@@ -54,9 +79,9 @@ Servy intentionally keeps v1 narrow:
 
 ## Release status
 
-Servy is currently **pre-v1**. The CLI, config schema, and safety model are usable for local testing and disposable hosts, but a public production release should wait for real VPS validation across the supported OS matrix.
+Servy is currently **pre-v1**. Public releases still lack signed artifacts, and full Ubuntu/Debian × amd64/arm64 mutation testing on real VPS images is not complete. The CLI, config schema, and safety model are usable for local testing and disposable hosts.
 
-See [`docs/next-actions.md`](docs/next-actions.md) for the remaining release checklist.
+See [`docs/roadmap.md`](docs/roadmap.md) for the current milestone plan and non-goals.
 
 ## Supported hosts
 
@@ -277,10 +302,10 @@ The real plan includes commands, rationale, recovery hints, and skipped/already-
 
 | Document | Audience |
 | --- | --- |
-| [`docs/mvp-plan.md`](docs/mvp-plan.md) | MVP scope and implementation plan |
+| [`docs/roadmap.md`](docs/roadmap.md) | Current milestones, non-goals, and release checklist |
 | [`docs/architecture.md`](docs/architecture.md) | Maintainers changing internals |
 | [`docs/ai-agents.md`](docs/ai-agents.md) | AI agents working on the repo |
-| [`docs/next-actions.md`](docs/next-actions.md) | Release and real VPS validation checklist |
+| [`docs/history/mvp-v0.md`](docs/history/mvp-v0.md) | Historical MVP plan (delivered) |
 | [`SECURITY.md`](SECURITY.md) | Vulnerability reporting and security model |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution rules and safety expectations |
 

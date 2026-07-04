@@ -1,3 +1,6 @@
+> **Historical Russian-language spec.** Kept for provenance — this is the original brief that produced Servy MVP.
+> Current, English-first project docs live under [`docs/`](../) and [`README.md`](../../README.md).
+
 # Universal VPS Setup CLI — ТЗ для AI-агентов
 
 ## 1. Назначение проекта
