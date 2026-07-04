@@ -92,8 +92,7 @@ func (Docker) Plan(ctx Context) []plan.Step {
 	writeRepo := fmt.Sprintf("printf %%s %s > /etc/apt/sources.list.d/docker.sources", shellArg(repo))
 	return []plan.Step{
 		{ID: "docker.keyring.dir", Module: "docker", Description: "create apt keyring directory", Status: plan.WillRun, Command: []string{"install", "-m", "0755", "-d", "/etc/apt/keyrings"}},
-		{ID: "docker.gpg", Module: "docker", Description: "download Docker official GPG key", Status: plan.WillRun, Command: []string{"curl", "-fsSL", "https://download.docker.com/linux/" + ctx.OS.ID + "/gpg", "-o", "/etc/apt/keyrings/docker.asc"}},
-		{ID: "docker.gpg.perms", Module: "docker", Description: "make Docker GPG key readable by apt", Status: plan.WillRun, Command: []string{"chmod", "a+r", "/etc/apt/keyrings/docker.asc"}},
+		{ID: "docker.keyring.install", Module: "docker", Description: "download Docker apt keyring and verify pinned GPG fingerprint", Status: plan.WillRun, Command: []string{selfBinary(ctx), "internal", "install-apt-keyring", "--url", "https://download.docker.com/linux/" + ctx.OS.ID + "/gpg", "--dest", "/etc/apt/keyrings/docker.asc", "--fingerprint", dockerGPGFingerprint}, Rationale: "verify against pinned Docker Release (CE deb) primary key " + dockerGPGFingerprint},
 		{ID: "docker.repo", Module: "docker", Description: "add Docker official apt repository", Status: plan.WillRun, Command: []string{"/bin/sh", "-c", writeRepo}},
 		{ID: "docker.apt.update", Module: "docker", Description: "refresh apt after adding Docker repository", Status: plan.WillRun, Command: []string{"apt-get", "update"}},
 		{ID: "docker.install", Module: "docker", Description: "install Docker Engine, CLI, containerd, buildx, compose plugin", Status: plan.WillRun, Command: []string{"apt-get", "install", "-y", "docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"}, RollbackHint: "review Docker packages and /var/lib/docker before removing anything"},
@@ -295,9 +294,9 @@ func (Caddy) Plan(ctx Context) []plan.Step {
 		}
 		return []plan.Step{
 			{ID: "caddy.prereqs", Module: "caddy", Description: "install Caddy apt repository prerequisites", Status: plan.WillRun, Command: []string{"apt-get", "install", "-y", "debian-keyring", "debian-archive-keyring", "apt-transport-https", "curl", "gnupg"}},
-			{ID: "caddy.key.install", Module: "caddy", Description: "download and install Caddy stable repository keyring from private tempdir", Status: plan.WillRun, Command: []string{"/bin/sh", "-c", "tmpdir=$(mktemp -d) && trap 'rm -rf \"$tmpdir\"' EXIT INT TERM && curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key -o \"$tmpdir/gpg.key\" && gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \"$tmpdir/gpg.key\""}},
+			{ID: "caddy.keyring.install", Module: "caddy", Description: "download Caddy stable apt keyring and verify pinned GPG fingerprint", Status: plan.WillRun, Command: []string{selfBinary(ctx), "internal", "install-apt-keyring", "--url", "https://dl.cloudsmith.io/public/caddy/stable/gpg.key", "--dest", "/usr/share/keyrings/caddy-stable-archive-keyring.gpg", "--fingerprint", caddyGPGFingerprint}, Rationale: "verify against pinned Caddy Cloudsmith primary key " + caddyGPGFingerprint},
 			{ID: "caddy.repo", Module: "caddy", Description: "download Caddy stable apt source list", Status: plan.WillRun, Command: []string{"curl", "-1sLf", "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt", "-o", "/etc/apt/sources.list.d/caddy-stable.list"}},
-			{ID: "caddy.perms", Module: "caddy", Description: "make Caddy repository files readable", Status: plan.WillRun, Command: []string{"chmod", "o+r", "/usr/share/keyrings/caddy-stable-archive-keyring.gpg", "/etc/apt/sources.list.d/caddy-stable.list"}},
+			{ID: "caddy.perms", Module: "caddy", Description: "make Caddy repository source list readable", Status: plan.WillRun, Command: []string{"chmod", "o+r", "/etc/apt/sources.list.d/caddy-stable.list"}},
 			{ID: "caddy.apt.update", Module: "caddy", Description: "refresh apt after adding Caddy repository", Status: plan.WillRun, Command: []string{"apt-get", "update"}},
 			{ID: "caddy.install", Module: "caddy", Description: "install Caddy host package without generating project Caddyfile", Status: plan.WillRun, Command: []string{"apt-get", "install", "-y", "caddy"}},
 		}
@@ -328,3 +327,26 @@ func containsPort(ports []int, port int) bool {
 func shellArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
+
+// Pinned GPG primary fingerprints for apt keyrings we install.
+//
+// These values are the authoritative trust anchor for any package
+// eventually installed from these repositories. They are hard-coded on
+// purpose: TLS alone is not enough for a keyring that authorises root
+// packages, and letting the fingerprint float would defeat the pin.
+//
+// When rotating (for example after upstream key change) verify against
+// the official Docker / Caddy documentation, then update these constants
+// and note the reason in CHANGELOG.md and docs/roadmap.md.
+const (
+	// dockerGPGFingerprint is Docker's Release (CE deb) primary key.
+	// Source: https://download.docker.com/linux/ubuntu/gpg and .../debian/gpg
+	// Verified 2026-07-04.
+	dockerGPGFingerprint = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+
+	// caddyGPGFingerprint is the Caddy stable release signing primary key
+	// distributed via Cloudsmith.
+	// Source: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+	// Verified 2026-07-04.
+	caddyGPGFingerprint = "65760C51EDEA2017CEA2CA15155B6D79CA56EA34"
+)

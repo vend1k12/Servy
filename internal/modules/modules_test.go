@@ -54,7 +54,7 @@ func TestBaseSkipsGitHubCLIRepoWhenPresent(t *testing.T) {
 func TestDockerOnlyPlansOfficialDockerInstall(t *testing.T) {
 	cfg := config.Default("docker-only")
 	p := Build(Context{Config: cfg, OS: supportedOS(), State: fakeState{commands: map[string]bool{}, services: map[string]bool{}}})
-	assertStep(t, p, "docker.gpg", plan.WillRun)
+	assertStep(t, p, "docker.keyring.install", plan.WillRun)
 	assertStep(t, p, "docker.repo", plan.WillRun)
 	assertStep(t, p, "docker.install", plan.WillRun)
 	if hasCommandArg(p, "snap") || hasCommandArg(p, "docker-compose") {
