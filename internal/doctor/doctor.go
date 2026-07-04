@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/vend1k12/servy/internal/platform"
@@ -39,8 +40,10 @@ func Run(osInfo platform.Info, st system.State) []Check {
 	add("docker-repo-network", tcpOK("download.docker.com:443"), "tcp download.docker.com:443", "allow outbound HTTPS to download.docker.com")
 	add("github-cli-repo-network", tcpOK("cli.github.com:443"), "tcp cli.github.com:443", "allow outbound HTTPS to cli.github.com")
 	add("systemd", osInfo.HasSystemd, strconv.FormatBool(osInfo.HasSystemd), "use a systemd-based VPS image")
-	add("disk", diskOK(), diskDetails(), "free disk space on /")
-	add("memory", memOK(), memDetails(), "add memory or swap before applying larger profiles")
+	diskOK, diskInfo := diskStatus()
+	add("disk", diskOK, diskInfo, fmt.Sprintf("free at least %s and %.0f%% of / before applying", humanBytes(minFreeDiskBytes), minFreeDiskFraction*100))
+	memOK, memInfo := memStatus()
+	add("memory", memOK, memInfo, fmt.Sprintf("free at least %s of RAM (add swap for smaller VPS)", humanBytes(minAvailMemBytes)))
 	add("ports", true, occupiedPorts(), "")
 	add("docker", st.CommandExists("docker"), commandVersion("docker", "--version"), "enable the docker module and run `servy apply`")
 	add("caddy", st.CommandExists("caddy"), commandVersion("caddy", "version"), "set modules.caddy.mode to host if host-level Caddy is required")
@@ -63,26 +66,85 @@ func tcpOK(addr string) bool {
 	return true
 }
 
-func diskOK() bool { return true }
-func diskDetails() string {
-	out, err := safeOutput("df", "-h", "/")
-	if err != nil {
-		return err.Error()
+// Doctor thresholds. Values are conservative: enough to say "you have a real
+// problem" without turning small VPS images into constant warnings.
+const (
+	minFreeDiskBytes    = 2 * 1024 * 1024 * 1024 // 2 GiB
+	minFreeDiskFraction = 0.10                   // 10% of /
+	minAvailMemBytes    = 512 * 1024 * 1024      // 512 MiB
+)
+
+// diskStatus reports whether / has enough free space, plus a human-readable
+// details string. Falls back to the previous "df -h /" line when statfs is
+// not available.
+func diskStatus() (bool, string) {
+	var s syscall.Statfs_t
+	if err := syscall.Statfs("/", &s); err != nil {
+		return false, err.Error()
 	}
-	return compact(string(out))
+	blockSize := uint64(s.Bsize)
+	free := s.Bavail * blockSize
+	total := s.Blocks * blockSize
+	ok := free >= minFreeDiskBytes
+	if total > 0 && float64(free)/float64(total) < minFreeDiskFraction {
+		ok = false
+	}
+	details := fmt.Sprintf("/: free=%s total=%s", humanBytes(free), humanBytes(total))
+	return ok, details
 }
 
-func memOK() bool { return true }
-func memDetails() string {
+// memStatus reads MemAvailable from /proc/meminfo. Linux-only file; if it is
+// missing we return true with a "unknown" note so non-Linux dev hosts running
+// doctor for testing do not fail the check.
+func memStatus() (bool, string) {
 	b, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
-		return err.Error()
+		return true, "meminfo unavailable: " + err.Error()
 	}
-	lines := strings.Split(string(b), "\n")
-	if len(lines) > 2 {
-		lines = lines[:2]
+	avail, total, ok := parseMemInfo(b)
+	if !ok {
+		return true, "meminfo unparseable"
 	}
-	return strings.Join(lines, "; ")
+	return avail >= minAvailMemBytes, fmt.Sprintf("MemAvailable=%s MemTotal=%s", humanBytes(avail), humanBytes(total))
+}
+
+// parseMemInfo extracts MemAvailable and MemTotal (in bytes). Both fields are
+// kB in /proc/meminfo. Returns ok=false if either field is missing.
+func parseMemInfo(b []byte) (avail, total uint64, ok bool) {
+	var haveAvail, haveTotal bool
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		key := strings.TrimSuffix(fields[0], ":")
+		val, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch key {
+		case "MemAvailable":
+			avail = val * 1024
+			haveAvail = true
+		case "MemTotal":
+			total = val * 1024
+			haveTotal = true
+		}
+	}
+	return avail, total, haveAvail && haveTotal
+}
+
+func humanBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := uint64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func occupiedPorts() string {
