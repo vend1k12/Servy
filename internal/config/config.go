@@ -20,7 +20,8 @@ type PresetInfo struct {
 var presetInfos = []PresetInfo{
 	{Name: "base", Description: "Minimal server baseline with safe disabled module defaults."},
 	{Name: "docker-only", Description: "Base defaults plus Docker and a deploy user for containerized deployments."},
-	{Name: "node", Description: "Docker defaults plus a deploy user and host Node.js tooling."},
+	{Name: "web-app", Description: "Docker defaults plus a deploy user and host Node.js tooling for web apps that run outside containers."},
+	{Name: "node", Description: "Deprecated alias for web-app; kept for backward compatibility."},
 }
 
 type Config struct {
@@ -40,6 +41,7 @@ type OSConstraints struct {
 }
 
 type Modules struct {
+	Base       Base       `yaml:"base,omitempty"`
 	Docker     Docker     `yaml:"docker,omitempty"`
 	Caddy      Caddy      `yaml:"caddy,omitempty"`
 	Firewall   Firewall   `yaml:"firewall,omitempty"`
@@ -47,6 +49,94 @@ type Modules struct {
 	DeployUser DeployUser `yaml:"deployUser,omitempty"`
 	Hardening  Hardening  `yaml:"hardening,omitempty"`
 	Node       Node       `yaml:"node,omitempty"`
+}
+
+// Base configures the always-on base module. When unset, defaults are applied
+// during ApplyProfileDefaults so existing configs need no changes.
+// Fields:
+//   - Packages: extra apt packages to install alongside the required prerequisites
+//     (ca-certificates, curl, gnupg, lsb-release, apt-transport-https).
+//     If nil, a curated default set is used. If empty, only prerequisites install.
+//   - Tools: opt-in/out map for individual tools inside the curated default set,
+//     for example {"tmux": false, "nano": false} to drop them. Unknown keys fail
+//     validation. Overrides Packages defaults, not Packages when explicitly set.
+//   - InstallGitHubCLI: install `gh` from the official apt repo. Default true.
+type Base struct {
+	Packages         []string        `yaml:"packages,omitempty"`
+	Tools            map[string]bool `yaml:"tools,omitempty"`
+	InstallGitHubCLI *bool           `yaml:"installGitHubCLI,omitempty"`
+}
+
+// requiredBasePrerequisites are always installed by the base module; they are
+// needed by later modules (apt repositories, keyring downloads).
+var requiredBasePrerequisites = []string{"ca-certificates", "curl", "gnupg", "lsb-release", "apt-transport-https"}
+
+// defaultBaseTools is the curated set of everyday server tools historically
+// installed by 'base'. Users may disable individual entries via modules.base.tools
+// (e.g. {"nano": false}) or override the entire list via modules.base.packages.
+var defaultBaseTools = []string{"git", "unzip", "jq", "htop", "tmux", "rsync", "nano"}
+
+// EffectivePackages returns the deduplicated list of apt packages the base
+// module should install. Order is deterministic (prerequisites first, then
+// tools in defaultBaseTools order, then anything extra in Packages order).
+func (b Base) EffectivePackages() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	for _, p := range requiredBasePrerequisites {
+		add(p)
+	}
+	// Two-mode packages field:
+	//   nil        -> curated defaults filtered by Tools
+	//   non-nil    -> exactly what the user asked for (Tools ignored)
+	if b.Packages == nil {
+		for _, t := range defaultBaseTools {
+			enabled, present := b.Tools[t]
+			if present && !enabled {
+				continue
+			}
+			add(t)
+		}
+		// Anything else the user added via Tools:{name:true} for a name that is
+		// not in the curated default set.
+		for name, on := range b.Tools {
+			if !on {
+				continue
+			}
+			if !stringInSlice(name, defaultBaseTools) {
+				add(name)
+			}
+		}
+	} else {
+		for _, p := range b.Packages {
+			add(p)
+		}
+	}
+	return out
+}
+
+// WantsGitHubCLI reports whether the GitHub CLI should be installed. Defaults
+// to true when the pointer is nil.
+func (b Base) WantsGitHubCLI() bool {
+	if b.InstallGitHubCLI == nil {
+		return true
+	}
+	return *b.InstallGitHubCLI
+}
+
+func stringInSlice(s string, xs []string) bool {
+	for _, x := range xs {
+		if s == x {
+			return true
+		}
+	}
+	return false
 }
 
 type Docker struct {
@@ -142,8 +232,11 @@ func Preset(name string) (Config, bool) {
 		return basePreset(), true
 	case "docker-only":
 		return dockerOnlyPreset(), true
-	case "node":
-		return nodePreset(), true
+	case "web-app", "node":
+		// 'node' is retained as a deprecated alias so existing scripts and
+		// example configs keep working. Both produce identical YAML except
+		// for the profile field, which is normalised to 'web-app'.
+		return webAppPreset(), true
 	default:
 		return Config{}, false
 	}
@@ -171,9 +264,8 @@ func dockerOnlyPreset() Config {
 	cfg.Modules.Node = Node{}
 	return cfg
 }
-
-func nodePreset() Config {
-	cfg := Default("node")
+func webAppPreset() Config {
+	cfg := Default("web-app")
 	cfg.Modules.Docker = Docker{Enabled: true, Channel: "stable"}
 	cfg.Modules.DeployUser = DeployUser{Enabled: true, Name: "deploy", Sudo: true}
 	cfg.Modules.Node = Node{Enabled: true, User: "deploy", Version: "lts", InstallPNPM: true}
@@ -184,11 +276,16 @@ func nodePreset() Config {
 }
 
 func ApplyProfileDefaults(cfg *Config) {
+	// 'node' is a historical alias for 'web-app'. Normalise before switching so
+	// downstream code only ever sees the canonical name.
+	if cfg.Profile == "node" {
+		cfg.Profile = "web-app"
+	}
 	switch cfg.Profile {
 	case "base":
 	case "docker-only":
 		cfg.Modules.Docker.Enabled = true
-	case "node":
+	case "web-app":
 		cfg.Modules.Docker.Enabled = true
 		cfg.Modules.Node.Enabled = true
 		cfg.Modules.Node.InstallPNPM = true
@@ -255,7 +352,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("schemaVersion must be %q", SchemaVersion)
 	}
 	switch c.Profile {
-	case "base", "docker-only", "node":
+	case "base", "docker-only", "web-app", "node":
 	default:
 		return fmt.Errorf("unsupported profile %q", c.Profile)
 	}
@@ -266,6 +363,9 @@ func (c Config) Validate() error {
 	case "none", "host", "check-only":
 	default:
 		return fmt.Errorf("modules.caddy.mode must be one of: none, host, check-only")
+	}
+	if err := validateBase(c.Modules.Base); err != nil {
+		return err
 	}
 	if c.Modules.Firewall.Enabled && (c.Modules.Firewall.SSHPort < 1 || c.Modules.Firewall.SSHPort > 65535) {
 		return errors.New("modules.firewall.sshPort must be between 1 and 65535")
@@ -318,4 +418,23 @@ func safeSwapPath(path string) bool {
 		return true
 	}
 	return regexp.MustCompile(`^/var/lib/servy/[a-zA-Z0-9._-]+\.swap$`).MatchString(path)
+}
+
+// validateBase enforces apt-safe package names in modules.base.
+// Debian policy: names are lowercase and may contain digits, +, -, . at
+// interior positions. Empty is disallowed; regex is intentionally strict.
+var basePackageNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
+
+func validateBase(b Base) error {
+	for _, p := range b.Packages {
+		if !basePackageNamePattern.MatchString(p) {
+			return fmt.Errorf("modules.base.packages contains unsafe apt package name %q", p)
+		}
+	}
+	for name := range b.Tools {
+		if !basePackageNamePattern.MatchString(name) {
+			return fmt.Errorf("modules.base.tools has unsafe apt package name %q", name)
+		}
+	}
+	return nil
 }

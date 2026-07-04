@@ -28,12 +28,23 @@ func TestDefaultDockerOnlyEnablesDocker(t *testing.T) {
 	}
 }
 
-func TestNodeRequiresTargetUser(t *testing.T) {
-	cfg := Default("node")
+func TestWebAppRequiresTargetUser(t *testing.T) {
+	cfg := Default("web-app")
 	cfg.Modules.DeployUser.Name = ""
 	cfg.Modules.Node.User = ""
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected node profile without target user to fail")
+		t.Fatal("expected web-app profile without target user to fail")
+	}
+}
+
+func TestNodeProfileIsAliasForWebApp(t *testing.T) {
+	cfg := Default("node")
+	// ApplyProfileDefaults normalises to the canonical profile name.
+	if cfg.Profile != "web-app" {
+		t.Fatalf("expected node -> web-app normalisation, got %q", cfg.Profile)
+	}
+	if !cfg.Modules.Node.Enabled || !cfg.Modules.Docker.Enabled {
+		t.Fatal("web-app defaults must enable Docker and Node")
 	}
 }
 
@@ -48,7 +59,7 @@ func TestSwapValidation(t *testing.T) {
 
 func TestPresetsHaveStableNamesAndDescriptions(t *testing.T) {
 	presets := Presets()
-	want := []string{"base", "docker-only", "node"}
+	want := []string{"base", "docker-only", "web-app", "node"}
 	if len(presets) != len(want) {
 		t.Fatalf("len(Presets()) = %d, want %d", len(presets), len(want))
 	}
@@ -67,36 +78,46 @@ func TestPresetsHaveStableNamesAndDescriptions(t *testing.T) {
 }
 
 func TestPresetConfigsValidate(t *testing.T) {
-	for _, name := range []string{"base", "docker-only", "node"} {
-		cfg, ok := Preset(name)
+	// 'node' resolves to a web-app config with profile normalised; test both.
+	for _, tc := range []struct {
+		name          string
+		wantProfile   string
+		wantValidates bool
+	}{
+		{"base", "base", true},
+		{"docker-only", "docker-only", true},
+		{"web-app", "web-app", true},
+		{"node", "web-app", true},
+	} {
+		cfg, ok := Preset(tc.name)
 		if !ok {
-			t.Fatalf("Preset(%q) returned ok=false", name)
+			t.Fatalf("Preset(%q) returned ok=false", tc.name)
 		}
-		if cfg.Profile != name {
-			t.Fatalf("Preset(%q).Profile = %q", name, cfg.Profile)
+		if cfg.Profile != tc.wantProfile {
+			t.Fatalf("Preset(%q).Profile = %q, want %q", tc.name, cfg.Profile, tc.wantProfile)
 		}
 		if err := cfg.Validate(); err != nil {
-			t.Fatalf("Preset(%q).Validate() = %v", name, err)
+			t.Fatalf("Preset(%q).Validate() = %v", tc.name, err)
 		}
 		if cfg.Confirmations != (Confirmations{}) {
-			t.Fatalf("Preset(%q) enabled confirmations: %#v", name, cfg.Confirmations)
+			t.Fatalf("Preset(%q) enabled confirmations: %#v", tc.name, cfg.Confirmations)
 		}
 	}
 }
 
-func TestNodePresetIncludesTargetUser(t *testing.T) {
-	cfg, ok := Preset("node")
+func TestWebAppPresetIncludesTargetUser(t *testing.T) {
+	cfg, ok := Preset("web-app")
 	if !ok {
-		t.Fatal("expected node preset")
+		t.Fatal("expected web-app preset")
 	}
 	if !cfg.Modules.DeployUser.Enabled {
-		t.Fatal("node preset must enable deploy user")
+		t.Fatal("web-app preset must enable deploy user")
 	}
 	if cfg.Modules.DeployUser.Name == "" {
-		t.Fatal("node preset must set deploy user name")
+		t.Fatal("web-app preset must set deploy user name")
 	}
 	if cfg.Modules.Node.User == "" {
-		t.Fatal("node preset must set node user")
+		t.Fatal("web-app preset must set node user")
 	}
 }
 

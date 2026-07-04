@@ -202,7 +202,7 @@ func initCmd(streams IO) *cobra.Command {
 				selected = profile
 			}
 			if selected == "" {
-				selected = ask(reader, streams.Out, "Preset [base/docker-only/node/custom]", "docker-only")
+				selected = ask(reader, streams.Out, "Preset [base/docker-only/web-app/custom]", "docker-only")
 			}
 			if selected == "custom" {
 				cfg = askCustomConfig(reader, streams.Out)
@@ -574,7 +574,7 @@ func askCustomConfig(reader *bufio.Reader, w io.Writer) config.Config {
 		profile = "docker-only"
 	}
 	if nodeEnabled {
-		profile = "node"
+		profile = "web-app"
 	}
 	cfg := config.Default(profile)
 	cfg.Modules.Docker.Enabled = dockerEnabled

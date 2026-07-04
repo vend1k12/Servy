@@ -53,7 +53,7 @@ type Base struct{}
 
 func (Base) Name() string { return "base" }
 func (Base) Plan(ctx Context) []plan.Step {
-	basePkgs := []string{"ca-certificates", "curl", "gnupg", "lsb-release", "apt-transport-https", "git", "unzip", "jq", "htop", "tmux", "rsync", "nano"}
+	basePkgs := ctx.Config.Modules.Base.EffectivePackages()
 	installed := ctx.State.AptPackagesInstalled(basePkgs)
 	var missing []string
 	for _, p := range basePkgs {
@@ -72,6 +72,10 @@ func (Base) Plan(ctx Context) []plan.Step {
 		)
 	}
 
+	if !ctx.Config.Modules.Base.WantsGitHubCLI() {
+		steps = append(steps, plan.Step{ID: "base.gh.skip", Module: "base", Description: "GitHub CLI install disabled via modules.base.installGitHubCLI: false", Status: plan.WillSkip})
+		return steps
+	}
 	if ctx.State.CommandExists("gh") {
 		return append(steps, plan.Step{ID: "base.gh.present", Module: "base", Description: "GitHub CLI is already installed", Status: plan.AlreadyOK, Command: []string{"gh", "--version"}})
 	}
