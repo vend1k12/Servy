@@ -331,10 +331,19 @@ func moduleCmd(streams IO) *cobra.Command {
 
 func updateCmd(streams IO) *cobra.Command {
 	var repo, version, installDir string
+	var requireCosign bool
 	cmd := &cobra.Command{Use: "update", Args: cobra.NoArgs, Short: "Download and install the latest Servy release", RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		res, err := update.Install(ctx, update.Options{Repo: repo, Version: version, CurrentVersion: app.Version, InstallDir: installDir, BinaryName: app.BinaryName})
+		res, err := update.Install(ctx, update.Options{
+			Repo:           repo,
+			Version:        version,
+			CurrentVersion: app.Version,
+			InstallDir:     installDir,
+			BinaryName:     app.BinaryName,
+			RequireCosign:  requireCosign,
+			Stderr:         streams.Err,
+		})
 		if err != nil {
 			return err
 		}
@@ -348,6 +357,7 @@ func updateCmd(streams IO) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&repo, "repo", "vend1k12/servy", "GitHub repository owner/name")
 	cmd.Flags().StringVar(&version, "version", "", "release tag to install (defaults to latest)")
 	cmd.Flags().StringVar(&installDir, "install-dir", "", "directory to install into (defaults to current executable directory)")
+	cmd.Flags().BoolVar(&requireCosign, "require-cosign", false, "fail unless cosign keyless signature verification succeeds")
 
 	check := &cobra.Command{Use: "check", Args: cobra.NoArgs, Short: "Check whether a newer Servy release exists", RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

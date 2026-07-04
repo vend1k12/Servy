@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # cosign OIDC signing via Fulcio
 
 jobs:
   release:
@@ -29,14 +30,71 @@ jobs:
         run: |
           set -eu
           export GOTOOLCHAIN=go1.26.3
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          BUILD_DATE="$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p dist
           for arch in amd64 arm64; do
-            GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-s -w -X github.com/vend1k12/servy/internal/app.Version=${GITHUB_REF_NAME} -X github.com/vend1k12/servy/internal/app.Commit=${GITHUB_SHA} -X github.com/vend1k12/servy/internal/app.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o dist/servy ./cmd/servy
-            tar -C dist -czf "dist/servy_linux_${arch}.tar.gz" servy
+            GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X github.com/vend1k12/servy/internal/app.Version=${GITHUB_REF_NAME} -X github.com/vend1k12/servy/internal/app.Commit=${GITHUB_SHA} -X github.com/vend1k12/servy/internal/app.Date=${BUILD_DATE}" \
+              -o dist/servy ./cmd/servy
+            tar --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --sort=name \
+                -C dist -czf "dist/servy_linux_${arch}.tar.gz" servy
             rm dist/servy
           done
           cd dist
           sha256sum servy_linux_*.tar.gz > checksums.txt
+      - name: Validate examples with fresh binary
+        run: |
+          set -eu
+          tar -C /tmp -xzf dist/servy_linux_amd64.tar.gz
+          for f in examples/*.yml; do
+            /tmp/servy validate --config "$f"
+          done
+      - name: Install pinned cosign
+        env:
+          # Pinned to sigstore/cosign v3.1.1. Update in tandem with any
+          # cosign upstream bump.
+          COSIGN_VERSION: v3.1.1
+          COSIGN_SHA256_AMD64: ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc
+        run: |
+          set -eu
+          curl -fsSLo /tmp/cosign "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          # Trust-on-first-use: check the pinned sha256. If cosign upstream
+          # rotates the binary, this job fails and the maintainer updates
+          # COSIGN_SHA256_AMD64 deliberately after diffing the release notes.
+          echo "${COSIGN_SHA256_AMD64}  /tmp/cosign" | sha256sum -c -
+          install -m 0755 /tmp/cosign /usr/local/bin/cosign
+          cosign version
+      - name: Sign release artifacts with cosign (keyless OIDC)
+        env:
+          COSIGN_YES: "true"  # non-interactive OIDC in CI
+        run: |
+          set -eu
+          cd dist
+          # Sign every archive we ship. checksums.txt is signed too so
+          # a downloader can pin trust to the checksums file and derive
+          # per-file sha via awk (matches install.sh).
+          for target in servy_linux_*.tar.gz checksums.txt; do
+            cosign sign-blob --yes \
+              --output-signature "${target}.sig" \
+              --output-certificate "${target}.pem" \
+              "${target}"
+          done
+          # Publish provenance summary so users can spot-check identity/issuer.
+          cat > cosign.txt <<EOF
+          Signed with Sigstore keyless OIDC.
+          identity:  https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}
+          issuer:    https://token.actions.githubusercontent.com
+
+          Verify locally:
+          cosign verify-blob \\
+            --certificate <asset>.pem \\
+            --signature   <asset>.sig \\
+            --certificate-identity-regexp "^https://github\\.com/${GITHUB_REPOSITORY}/\\.github/workflows/release\\.yml@" \\
+            --certificate-oidc-issuer     https://token.actions.githubusercontent.com \\
+            <asset>
+          EOF
       - name: Publish GitHub release
         env:
           BASH_ENV: /dev/null

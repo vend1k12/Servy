@@ -146,19 +146,33 @@ servy doctor
 
 ### From release bootstrap script
 
-`install.sh` is intentionally minimal: it installs the Servy binary and runs `servy doctor`. It does **not** configure the server.
+`install.sh` is intentionally minimal: it downloads a signed release binary, verifies it, and runs `servy doctor`. It does **not** configure the server.
+
+**Recommended (download and inspect before running):**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/vend1k12/servy/main/install.sh | sh
+curl -fsSLO https://raw.githubusercontent.com/vend1k12/servy/main/install.sh
+cat install.sh   # read before running anything as root
+sh install.sh
 ```
 
-For production use, prefer downloading a tagged release and verifying checksums manually until the first signed public release is published.
+The installer verifies each release archive with two independent anchors:
+
+1. **sha256** against the `checksums.txt` published in the same release.
+2. **cosign keyless signature** (Sigstore OIDC → Fulcio → Rekor), when `cosign` is installed. The signing identity is pinned to `vend1k12/Servy/.github/workflows/release.yml`.
+
+For paranoid installs, set `SERVY_REQUIRE_COSIGN=1` so the installer refuses to proceed unless the cosign check succeeds:
+
+```sh
+SERVY_REQUIRE_COSIGN=1 sh install.sh
+```
 
 Update an installed binary:
 
 ```sh
 servy update check
-sudo servy update
+sudo servy update                   # sha256 + cosign (best-effort)
+sudo servy update --require-cosign  # refuse to update without a valid signature
 ```
 
 ## Commands
