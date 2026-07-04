@@ -1,3 +1,6 @@
+> **Historical planning document.** All MVP phases below were delivered; kept here for provenance.
+> For current direction see [`docs/roadmap.md`](../roadmap.md).
+
 # Servy MVP plan
 
 ## Decisions
