@@ -288,3 +288,93 @@ func TestWriteSSHDDropIn_RejectsMultilineDirective(t *testing.T) {
 		}
 	}
 }
+
+// Below tests exercise the FD-anchored variants used by servy revert. They
+// re-open a tempdir as the "sshd_config.d" or "/etc" surrogate via the same
+// helper the CLI uses, then drive the exported primitives against it. We
+// cannot invoke RemoveSSHDDropInLines / RemoveFstabLine directly since they
+// address /etc/ssh and /etc absolutely, so the helper-level tests are the
+// coverage boundary the unit suite can provide.
+
+func TestRemoveDropInLines_SkipsMissing(t *testing.T) {
+	// Sanity: readDropIn treats a missing file as existed=false. The public
+	// RemoveSSHDDropInLines contract inherits this: a nil error, no side
+	// effect. Tested indirectly via readDropIn.
+	dirFD := openDir(t, t.TempDir())
+	_, existed, err := readDropIn(dirFD, "99-servy-hardening.conf")
+	if err != nil {
+		t.Fatalf("readDropIn: %v", err)
+	}
+	if existed {
+		t.Fatal("existed=true for missing file")
+	}
+}
+
+func TestRemoveDropInLines_DropsMatchingLines(t *testing.T) {
+	// End-to-end via the read/write helpers: seed a drop-in with mixed
+	// content, invoke the same read+rewrite loop RemoveSSHDDropInLines uses,
+	// and assert only the Servy lines were removed.
+	dir := t.TempDir()
+	dirFD := openDir(t, dir)
+	seed := []byte("# operator note\nPermitRootLogin no\nMaxAuthTries 3\nPasswordAuthentication no\n")
+	if err := writeDropInAtomic(dirFD, "99-servy-hardening.conf", ".99-servy-hardening.conf.tmp", seed); err != nil {
+		t.Fatal(err)
+	}
+	original, existed, err := readDropIn(dirFD, "99-servy-hardening.conf")
+	if err != nil || !existed {
+		t.Fatalf("readDropIn seed: %v existed=%v", err, existed)
+	}
+	remove := map[string]struct{}{
+		"PermitRootLogin no":         {},
+		"PasswordAuthentication no":  {},
+	}
+	var kept []string
+	for _, line := range strings.Split(string(original), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if _, drop := remove[trimmed]; drop {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	next := []byte(strings.Join(kept, "\n") + "\n")
+	if err := writeDropInAtomic(dirFD, "99-servy-hardening.conf", ".99-servy-hardening.conf.tmp", next); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "99-servy-hardening.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# operator note\nMaxAuthTries 3\n"
+	if string(got) != want {
+		t.Errorf("drop-in after remove:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRemoveSSHDDropInLines_RejectsEmptyOrMultiline(t *testing.T) {
+	for _, bad := range [][]string{
+		{""},
+		{"  "},
+		{"PermitRootLogin\nno"},
+	} {
+		if err := RemoveSSHDDropInLines(bad); err == nil {
+			t.Errorf("expected error for %q", bad)
+		}
+	}
+}
+
+func TestRemoveSSHDDropInLines_NoLinesIsNoop(t *testing.T) {
+	if err := RemoveSSHDDropInLines(nil); err != nil {
+		t.Errorf("nil slice must be a no-op, got %v", err)
+	}
+}
+
+func TestRemoveFstabLine_RejectsEmptyOrMultiline(t *testing.T) {
+	for _, bad := range []string{"", "  ", "line\nother"} {
+		if err := RemoveFstabLine(bad); err == nil {
+			t.Errorf("expected error for %q", bad)
+		}
+	}
+}

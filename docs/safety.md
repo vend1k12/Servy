@@ -81,11 +81,11 @@ Servy runs one step at a time and stops on the first failure. Partial state is e
 - The step log is under `/var/log/servy/` — a JSONL file per apply, containing every command with stdout, stderr, and exit code.
 - Nothing Servy touches is destructive on top of an existing user config; drop-ins and apt list files are additive.
 - Re-run `plan` to see the current delta. Steps that already succeeded show as `already_ok` (for `base` packages) or reappear as `will_run` (for module state Servy cannot cheaply detect).
-- Once `v1.0` ships `servy revert <module>`, the manifest at `/var/lib/servy/manifest.json` will let you undo Servy-owned side effects. Until then, drop-ins and list files live in known paths (`/etc/ssh/sshd_config.d/99-servy-hardening.conf`, `/etc/sysctl.d/99-servy.conf`, `/etc/apt/sources.list.d/*.list`, `/etc/apt/keyrings/*.asc`) and can be removed by hand.
+- `servy revert <module>` reads `/var/lib/servy/manifest.json` and undoes what that module added on the last apply: apt list files, apt keyrings, sysctl drop-ins, sshd directive lines, swapfile + `/etc/fstab` entry. Add `--purge-packages` to also `apt-get remove --purge` the Servy-installed packages and `systemctl disable --now` the services it enabled. Deploy user removal and group memberships are out of scope in v1 and print as `will_skip` steps.
 
 ### You need to disable a change Servy made
 
-Until `servy revert` lands, the manual playbook:
+If `servy revert` cannot help (older manifest, module out of scope, manifest deleted), the manual playbook:
 
 | Change | Undo |
 |---|---|

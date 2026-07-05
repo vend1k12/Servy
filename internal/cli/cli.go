@@ -19,9 +19,11 @@ import (
 	"github.com/vend1k12/servy/internal/config"
 	"github.com/vend1k12/servy/internal/doctor"
 	"github.com/vend1k12/servy/internal/logging"
+	"github.com/vend1k12/servy/internal/manifest"
 	"github.com/vend1k12/servy/internal/modules"
 	"github.com/vend1k12/servy/internal/plan"
 	"github.com/vend1k12/servy/internal/platform"
+	"github.com/vend1k12/servy/internal/revert"
 	"github.com/vend1k12/servy/internal/runner"
 	"github.com/vend1k12/servy/internal/safeops"
 	"github.com/vend1k12/servy/internal/system"
@@ -57,7 +59,7 @@ func NewRoot(streams IO) *cobra.Command {
 	root.SetIn(streams.In)
 	root.SetOut(streams.Out)
 	root.SetErr(streams.Err)
-	root.AddCommand(versionCmd(streams), doctorCmd(streams), validateCmd(streams), planCmd(streams), applyCmd(streams), initCmd(streams), statusCmd(streams), logsCmd(streams), moduleCmd(streams), updateCmd(streams), completionCmd(streams), internalCmd())
+	root.AddCommand(versionCmd(streams), doctorCmd(streams), validateCmd(streams), planCmd(streams), applyCmd(streams), initCmd(streams), statusCmd(streams), logsCmd(streams), moduleCmd(streams), updateCmd(streams), revertCmd(streams), completionCmd(streams), internalCmd())
 	return root
 }
 
@@ -172,6 +174,12 @@ func applyCmd(streams IO) *cobra.Command {
 		}
 		if err != nil {
 			return err
+		}
+		if mErr := recordManifest(cfg, cfgPath, osInfo, results); mErr != nil {
+			// Manifest write is best-effort: apply already succeeded and
+			// we do not want a /var/lib/servy issue to surface as a failed
+			// apply. Log to stderr so operators can spot the miss.
+			fmt.Fprintf(streams.Err, "warning: could not update manifest: %v\n", mErr)
 		}
 		fmt.Fprintf(streams.Out, "applied %d steps; log: %s\n", len(results), log.Path)
 		return nil
@@ -451,7 +459,20 @@ func internalCmd() *cobra.Command {
 	installKeyring.Flags().StringVar(&keyringURL, "url", "", "HTTPS keyring URL")
 	installKeyring.Flags().StringVar(&keyringDest, "dest", "", "absolute destination path under /etc/apt/keyrings")
 	installKeyring.Flags().StringVar(&keyringFPR, "fingerprint", "", "expected GPG primary fingerprint (40 hex)")
-	root.AddCommand(appendKey, writeSSH, installKeyring)
+
+	var removeLines []string
+	removeSSHLines := &cobra.Command{Use: "remove-sshd-dropin-lines", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
+		return safeops.RemoveSSHDDropInLines(removeLines)
+	}}
+	removeSSHLines.Flags().StringArrayVar(&removeLines, "line", nil, "sshd directive line to remove (repeatable)")
+
+	var fstabLine string
+	removeFstab := &cobra.Command{Use: "remove-fstab-line", Hidden: true, RunE: func(cmd *cobra.Command, args []string) error {
+		return safeops.RemoveFstabLine(fstabLine)
+	}}
+	removeFstab.Flags().StringVar(&fstabLine, "line", "", "exact /etc/fstab line to remove")
+
+	root.AddCommand(appendKey, writeSSH, installKeyring, removeSSHLines, removeFstab)
 	return root
 }
 
@@ -682,4 +703,107 @@ func askInt(reader *bufio.Reader, w io.Writer, prompt string, def int) int {
 		return def
 	}
 	return parsed
+}
+
+// recordManifest appends a new Apply record to /var/lib/servy/manifest.json
+// summarising which module side effects the run produced. Callers must have
+// already confirmed apply succeeded — a failed apply must not surface as a
+// clean manifest entry.
+func recordManifest(cfg config.Config, cfgPath string, osInfo platform.Info, results []runner.Result) error {
+	var ranIDs []string
+	for _, res := range results {
+		if res.Err == nil {
+			ranIDs = append(ranIDs, res.Step.ID)
+		}
+	}
+	ctx := modules.Context{Config: cfg, OS: osInfo, State: system.RealState{}, BinaryPath: executablePath()}
+	records := modules.BuildManifestRecords(ctx, modules.RanSet(ranIDs))
+	if len(records) == 0 {
+		return nil
+	}
+	m, err := manifest.Load(manifest.DefaultPath)
+	if err != nil {
+		return err
+	}
+	m.Applies = append(m.Applies, manifest.Apply{
+		Timestamp:    time.Now().UTC(),
+		ServyVersion: app.Version,
+		Profile:      cfg.Profile,
+		ConfigPath:   cfgPath,
+		Modules:      records,
+	})
+	return manifest.Save(manifest.DefaultPath, m)
+}
+
+// revertCmd wires `servy revert <module>`. Reads /var/lib/servy/manifest.json,
+// builds an inverse plan for the named module, prints it, and applies it
+// through the same runner used by apply. `--purge-packages` opts in to
+// apt purge + systemctl disable for services Servy enabled.
+func revertCmd(streams IO) *cobra.Command {
+	var yes, dryRun, purge bool
+	var manifestPath string
+	cmd := &cobra.Command{
+		Use:   "revert <module>",
+		Short: "Roll back Servy-owned side effects for a module",
+		Long: "Reverts drop-ins, apt list files, apt keyrings, sysctl drop-ins, " +
+			"the /etc/fstab swap line, and the swapfile that Servy recorded in " +
+			"/var/lib/servy/manifest.json for the named module.\n\n" +
+			"Package removal and `systemctl disable --now` are opt-in via " +
+			"`--purge-packages`; deploy user removal and group memberships are " +
+			"out of scope in v1 and are printed as skipped steps.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			module := args[0]
+			if !knownModule(module) {
+				return fmt.Errorf("unknown module %q; valid modules: %s", module, strings.Join(modules.ModuleNames(), ", "))
+			}
+			path := manifestPath
+			if path == "" {
+				path = manifest.DefaultPath
+			}
+			m, err := manifest.Load(path)
+			if err != nil {
+				return err
+			}
+			rec := m.LatestModule(module)
+			p := revert.Build(module, rec, revert.Options{PurgePackages: purge})
+			p.Print(streams.Out)
+			if dryRun {
+				fmt.Fprintln(streams.Out, "dry-run: no changes applied")
+				return nil
+			}
+			// Nothing to run — either the manifest never recorded the
+			// module or every step is WillSkip. Bail out cleanly so a
+			// re-run of revert is a visible no-op instead of prompting for
+			// --yes.
+			if !p.HasRunnableSteps() {
+				return nil
+			}
+			if !yes {
+				return errors.New("refusing to revert without --yes: review the plan above, then re-run with --yes (see docs/safety.md)")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			results, err := runner.Apply(ctx, p, runner.CommandRunner{})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(streams.Out, "reverted %d steps for module %s\n", len(results), module)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "apply the revert plan")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show plan without changing the system")
+	cmd.Flags().BoolVar(&purge, "purge-packages", false, "also `apt-get remove --purge` packages Servy installed and disable services it enabled")
+	cmd.Flags().StringVar(&manifestPath, "manifest", "", "manifest file (defaults to "+manifest.DefaultPath+")")
+	return cmd
+}
+
+func knownModule(name string) bool {
+	for _, n := range modules.ModuleNames() {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }

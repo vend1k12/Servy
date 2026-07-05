@@ -149,7 +149,7 @@ Apply logs: `/var/log/servy/<UTC timestamp>.jsonl`, mode `0600`.
 
 ### How do I roll back?
 
-Servy does not have `servy revert` yet — it is a v1.0 blocker. Until it lands, [`docs/safety.md#you-need-to-disable-a-change-servy-made`](safety.md#you-need-to-disable-a-change-servy-made) lists the manual undo steps per module.
+`servy revert <module>` reads the manifest Servy wrote at `/var/lib/servy/manifest.json` and undoes what that module added on the last apply. See [`docs/safety.md`](safety.md) for the exact effect set and the `--purge-packages` opt-in. Deploy user removal and group memberships are out of scope in v1 and print as `will_skip` steps; the manual undo table in [`docs/safety.md#you-need-to-disable-a-change-servy-made`](safety.md#you-need-to-disable-a-change-servy-made) covers those.
 
 ### Does Servy support `--json` for CI pipelines?
 
