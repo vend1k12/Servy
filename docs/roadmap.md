@@ -30,7 +30,7 @@ Blockers for `v1.0`:
 - ~~`WriteSSHDDropIn` uses the same `Openat` / `NOFOLLOW` pattern as `AppendAuthorizedKey`.~~ (done)
 - ~~`--yes` failure message names the missing confirmation and links `docs/safety.md`.~~ (done)
 - ~~Docker-smoke runs the four base images as a matrix and uploads build logs on failure.~~ (done)
-- `install.sh` is smoke-tested in CI against a local fake release.
+- ~~`install.sh` is smoke-tested in CI against a local fake release.~~ (done)
 - SLSA provenance and SBOM published alongside signed artifacts.
 - ~~`docs/troubleshooting.md`, `docs/faq.md`, `docs/safety.md` are written.~~ (done)
 
