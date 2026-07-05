@@ -75,6 +75,8 @@ Mutating `apply` runs write JSONL logs under `/var/log/servy/` with timestamp, c
 
 ## Safety invariants
 
+See [`docs/safety.md`](safety.md) for the operator-facing explanation of these invariants, the `confirmations.*` reference table, and the manual rollback playbook.
+
 - `init` writes generated YAML and previews; it never silently configures the host.
 - `plan` and `apply --dry-run` never mutate.
 - `--yes` is not a dangerous-action override.

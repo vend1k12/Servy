@@ -8,7 +8,7 @@ Servy is a single-binary Go CLI that runs **inside** a server, detects the host,
 
 [![CI](https://shieldcn.dev/github/ci/vend1k12/Servy.svg?workflow=ci.yml&branch=main&variant=branded)](https://github.com/vend1k12/Servy/actions/workflows/ci.yml)
 [![CodeQL](https://shieldcn.dev/github/checks/vend1k12/Servy/main/analyze.svg?variant=branded)](https://github.com/vend1k12/Servy/actions/workflows/codeql.yml)
-[![Go](https://shieldcn.dev/badge/Go-1.26.3-00ADD8.svg?logo=go&logoColor=white&variant=branded)](https://go.dev/)
+[![Go](https://shieldcn.dev/badge/Go-1.26.4-00ADD8.svg?logo=go&logoColor=white&variant=branded)](https://go.dev/)
 [![License](https://shieldcn.dev/github/license/vend1k12/Servy.svg?variant=branded)](LICENSE)
 [![Status](https://shieldcn.dev/badge/status-pre--v1-F97316.svg?variant=branded)](#release-status)
 

@@ -157,7 +157,7 @@ func applyCmd(streams IO) *cobra.Command {
 			return nil
 		}
 		if !yes {
-			return errors.New("refusing to apply without --yes: review the plan above, then re-run with --yes to execute non-dangerous steps; --yes never overrides confirmations.* (see docs/architecture.md#safety-invariants)")
+			return errors.New("refusing to apply without --yes: review the plan above, then re-run with --yes to execute non-dangerous steps; --yes never overrides confirmations.* (see docs/safety.md)")
 		}
 		log, err := logging.Open(cfg.Runtime.LogDir)
 		if err != nil {
