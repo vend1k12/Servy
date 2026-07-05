@@ -292,51 +292,165 @@ func AppendAuthorizedKey(username, key string) error {
 	return err
 }
 
+// WriteSSHDDropIn atomically installs a single sshd directive into
+// /etc/ssh/sshd_config.d/99-servy-hardening.conf. Same TOCTOU-safe pattern as
+// AppendAuthorizedKey: parents opened with O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC,
+// file opened via Openat with O_NOFOLLOW, staged via a sibling tempfile, and
+// swapped in with Renameat so a mid-flight symlink cannot redirect the write.
+//
+// sshd -t is invoked afterwards; on failure the previous contents are
+// restored (or the file removed, if it did not exist before) via the same FD
+// so a symlink planted between validate and revert cannot escape the
+// drop-in directory.
 func WriteSSHDDropIn(line string) error {
 	if strings.ContainsAny(line, "\r\n") || strings.TrimSpace(line) == "" {
 		return errors.New("single SSH directive line is required")
 	}
-	dir := "/etc/ssh/sshd_config.d"
-	path := filepath.Join(dir, "99-servy-hardening.conf")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create sshd_config.d: %w", err)
+	const (
+		sshDir      = "/etc/ssh"
+		dropInDir   = "sshd_config.d"
+		dropInName  = "99-servy-hardening.conf"
+		dropInStage = ".99-servy-hardening.conf.tmp"
+	)
+
+	sshFD, err := unix.Open(sshDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("open %s safely: %w", sshDir, err)
 	}
-	var original []byte
-	existed := false
-	if st, err := os.Lstat(path); err == nil {
-		if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
-			return errors.New("refusing to modify symlink or non-regular Servy sshd drop-in")
+	defer unix.Close(sshFD)
+
+	dirFD, err := unix.Openat(sshFD, dropInDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if !errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("open %s/%s safely: %w", sshDir, dropInDir, err)
 		}
-		existed = true
-		original, err = os.ReadFile(path)
+		if err := unix.Mkdirat(sshFD, dropInDir, 0o755); err != nil {
+			return fmt.Errorf("create %s/%s: %w", sshDir, dropInDir, err)
+		}
+		dirFD, err = unix.Openat(sshFD, dropInDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		if err != nil {
-			return fmt.Errorf("read existing sshd drop-in: %w", err)
+			return fmt.Errorf("open created %s/%s safely: %w", sshDir, dropInDir, err)
 		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect sshd drop-in: %w", err)
+	}
+	defer unix.Close(dirFD)
+
+	original, existed, err := readDropIn(dirFD, dropInName)
+	if err != nil {
+		return err
 	}
 	for _, existing := range strings.Split(string(original), "\n") {
 		if strings.TrimSpace(existing) == line {
 			return reloadSSH()
 		}
 	}
+
 	next := append([]byte{}, original...)
 	if len(next) > 0 && next[len(next)-1] != '\n' {
 		next = append(next, '\n')
 	}
 	next = append(next, []byte(line+"\n")...)
-	if err := os.WriteFile(path, next, 0o644); err != nil {
-		return fmt.Errorf("write sshd drop-in: %w", err)
+
+	if err := writeDropInAtomic(dirFD, dropInName, dropInStage, next); err != nil {
+		return err
 	}
 	if err := testSSHDConfig(); err != nil {
+		// Restore the previous state through the same directory FD so a
+		// symlink planted between test and revert cannot redirect the
+		// rollback write outside /etc/ssh/sshd_config.d.
 		if existed {
-			_ = os.WriteFile(path, original, 0o644)
+			_ = writeDropInAtomic(dirFD, dropInName, dropInStage, original)
 		} else {
-			_ = os.Remove(path)
+			_ = unix.Unlinkat(dirFD, dropInName, 0)
 		}
 		return err
 	}
 	return reloadSSH()
+}
+
+// readDropIn opens the drop-in through dirFD with O_NOFOLLOW, refuses
+// non-regular files, and returns its bytes. A missing file is reported as
+// existed=false with a nil error.
+func readDropIn(dirFD int, name string) ([]byte, bool, error) {
+	fd, err := unix.Openat(dirFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil, false, nil
+		}
+		if errors.Is(err, unix.ELOOP) {
+			return nil, false, errors.New("refusing to modify symlinked Servy sshd drop-in")
+		}
+		return nil, false, fmt.Errorf("open sshd drop-in safely: %w", err)
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return nil, false, fmt.Errorf("stat sshd drop-in: %w", err)
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		return nil, false, errors.New("refusing to modify non-regular sshd drop-in")
+	}
+	body, err := io.ReadAll(fdReader{fd: fd})
+	if err != nil {
+		return nil, false, fmt.Errorf("read sshd drop-in: %w", err)
+	}
+	return body, true, nil
+}
+
+// fdReader adapts a raw file descriptor to io.Reader without transferring
+// ownership — the caller keeps the defer-close. os.NewFile would consume the
+// fd, which conflicts with the readDropIn defer.
+type fdReader struct{ fd int }
+
+func (r fdReader) Read(p []byte) (int, error) {
+	n, err := unix.Read(r.fd, p)
+	if n == 0 && err == nil {
+		return 0, io.EOF
+	}
+	if n < 0 {
+		n = 0
+	}
+	return n, err
+}
+
+// writeDropInAtomic writes body to a sibling temp file opened through dirFD
+// with O_NOFOLLOW|O_EXCL, then renameat's it over name. Any pre-existing
+// staging file is unlinked first so a crashed prior run cannot block the
+// write.
+func writeDropInAtomic(dirFD int, name, stage string, body []byte) error {
+	// Best-effort: a leftover stage file from a crashed run must not block
+	// the current one. Ignore ENOENT.
+	if err := unix.Unlinkat(dirFD, stage, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+		return fmt.Errorf("clear stale sshd drop-in stage: %w", err)
+	}
+	fd, err := unix.Openat(dirFD, stage, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o644)
+	if err != nil {
+		return fmt.Errorf("stage sshd drop-in: %w", err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = unix.Close(fd)
+		}
+	}()
+	if _, err := unix.Write(fd, body); err != nil {
+		_ = unix.Unlinkat(dirFD, stage, 0)
+		return fmt.Errorf("write staged sshd drop-in: %w", err)
+	}
+	if err := unix.Fchmod(fd, 0o644); err != nil {
+		_ = unix.Unlinkat(dirFD, stage, 0)
+		return fmt.Errorf("chmod staged sshd drop-in: %w", err)
+	}
+	if err := unix.Close(fd); err != nil {
+		closed = true
+		_ = unix.Unlinkat(dirFD, stage, 0)
+		return fmt.Errorf("close staged sshd drop-in: %w", err)
+	}
+	closed = true
+	if err := unix.Renameat(dirFD, stage, dirFD, name); err != nil {
+		_ = unix.Unlinkat(dirFD, stage, 0)
+		return fmt.Errorf("install sshd drop-in: %w", err)
+	}
+	return nil
 }
 
 func testSSHDConfig() error {

@@ -52,6 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Apt keyring downloads verify pinned GPG fingerprints; TLS alone is no longer the sole trust anchor for a keyring that later authorises root packages.
 - Release archives are cosign-signed keyless via the `release.yml` workflow. `install.sh` and `servy update` verify signatures when cosign is installed.
 - `SECURITY.md` now contains an explicit threat model.
+- `WriteSSHDDropIn` now uses the same `Openat` / `O_NOFOLLOW` / `Renameat` pattern as `AppendAuthorizedKey`. `/etc/ssh` and `/etc/ssh/sshd_config.d` are opened with `O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC`, the drop-in is staged via a sibling tempfile and swapped in with `Renameat`, and `sshd -t` failure now reverts through the same directory FD via `Renameat` / `Unlinkat`. A symlink planted between validate and revert can no longer redirect the write outside the drop-in directory.
 
 ## [0.0.2] - 2026-06-15
 

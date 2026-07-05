@@ -27,7 +27,7 @@ Blockers for `v1.0`:
 
 - Full mutation matrix on real VPS images: Ubuntu 22.04, 24.04, 26.04 (once codename is confirmed) × amd64, arm64; Debian 12, 13 × amd64, arm64.
 - `servy revert <module>` to roll back Servy-owned side effects (drop-ins, apt list files, swapfile line).
-- `WriteSSHDDropIn` uses the same `Openat` / `NOFOLLOW` pattern as `AppendAuthorizedKey`.
+- ~~`WriteSSHDDropIn` uses the same `Openat` / `NOFOLLOW` pattern as `AppendAuthorizedKey`.~~ (done)
 - `--yes` failure message names the missing confirmation and links `docs/safety.md`.
 - Docker-smoke runs the four base images as a matrix and uploads build logs on failure.
 - `install.sh` is smoke-tested in CI against a local fake release.
