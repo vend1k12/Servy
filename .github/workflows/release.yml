@@ -6,7 +6,8 @@ on:
 
 permissions:
   contents: write
-  id-token: write  # cosign OIDC signing via Fulcio
+  id-token: write     # cosign OIDC signing via Fulcio + attest OIDC
+  attestations: write # actions/attest-build-provenance + attest-sbom
 
 jobs:
   release:
@@ -95,6 +96,33 @@ jobs:
             --certificate-oidc-issuer     https://token.actions.githubusercontent.com \\
             <asset>
           EOF
+      - name: Generate SBOM for the source that produced these archives
+        # Runs syft under the hood. Writes SPDX v2.3 JSON — the format
+        # actions/attest-sbom accepts as attestation predicate. The SBOM
+        # scans the checked-out source tree, which matches what the earlier
+        # `go build` step compiled from. Uploading a workflow artifact and
+        # a release asset is handled explicitly below (we ship the SBOM as
+        # part of `dist/*`), so both are disabled here to avoid duplicates.
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest SLSA build provenance for release archives
+        # SLSA v1.0 Build L3 provenance for every archive + the checksums
+        # file. Uses the checksums file itself as the subject list so the
+        # attestation covers exactly what cosign signed one step earlier.
+        # Verify with `gh attestation verify servy_linux_amd64.tar.gz --owner vend1k12`.
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-checksums: dist/checksums.txt
+      - name: Attest SBOM against release archives
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-checksums: dist/checksums.txt
+          sbom-path: dist/sbom.spdx.json
       - name: Publish GitHub release
         env:
           BASH_ENV: /dev/null

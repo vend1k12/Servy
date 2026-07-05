@@ -31,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `docs/faq.md`: positioning vs Ansible / cloud-init / bash / container managers, supported hosts, install and update flows, hand-verification recipe for release archives.
 - Docker-smoke job now runs as a `strategy.matrix.image` over `ubuntu:22.04`, `ubuntu:24.04`, `debian:12`, `debian:13` with `fail-fast: false`. Per-image build logs are teed to `smoke-logs/<slug>.log` and uploaded via `actions/upload-artifact@v7.0.1` on failure (14-day retention). Extracted `tests/docker/smoke-one.sh` so both the CI matrix and the local `tests/docker/run.sh` loop share the same build recipe.
 - `tests/install/smoke.sh` and an `install-smoke` CI job: build `servy` from source, stage a fake release (`servy_linux_<arch>.tar.gz` + `checksums.txt`) under a local `file://` base, run `install.sh` against it, assert the installed binary reports its version and passes `doctor`, then assert a tampered `checksums.txt` is rejected with a non-zero exit and no binary is left behind.
+- SLSA v1.0 Build L3 provenance for every release archive via `actions/attest-build-provenance@v4.1.1`. Subject list is derived from `checksums.txt` so the attestation covers exactly what cosign signed. Verify with `gh attestation verify servy_linux_<arch>.tar.gz --owner vend1k12`.
+- Release SBOM (SPDX v2.3 JSON) generated at release time via `anchore/sbom-action@v0.24.0` (syft under the hood), published as `sbom.spdx.json` alongside archives, and independently attested via `actions/attest-sbom@v4.1.0` bound to the same subject list.
 
 ### Changed
 - `README.md` "Release status" no longer implies pre-v1 is production-ready.
