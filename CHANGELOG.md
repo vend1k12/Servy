@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `docs/safety.md`: safety invariants, per-key `confirmations.*` reference, SSH lockout playbook, manual rollback table until `servy revert` lands.
 - `docs/troubleshooting.md`: catalog of user-visible error messages (apply refusals, doctor warnings, SSH lockouts, keyring failures, cosign / update / install issues) with recovery steps.
 - `docs/faq.md`: positioning vs Ansible / cloud-init / bash / container managers, supported hosts, install and update flows, hand-verification recipe for release archives.
+- Docker-smoke job now runs as a `strategy.matrix.image` over `ubuntu:22.04`, `ubuntu:24.04`, `debian:12`, `debian:13` with `fail-fast: false`. Per-image build logs are teed to `smoke-logs/<slug>.log` and uploaded via `actions/upload-artifact@v7.0.1` on failure (14-day retention). Extracted `tests/docker/smoke-one.sh` so both the CI matrix and the local `tests/docker/run.sh` loop share the same build recipe.
 
 ### Changed
 - `README.md` "Release status" no longer implies pre-v1 is production-ready.
