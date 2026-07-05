@@ -24,13 +24,40 @@ jobs:
 
   docker-smoke:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:12
+          - debian:13
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.26.4'
           cache: true
-      - run: tests/docker/run.sh
+      - name: Build linux binary
+        run: |
+          set -eu
+          mkdir -p dist
+          GOTOOLCHAIN=go1.26.4 GOOS=linux GOARCH="$(go env GOARCH)" go build -o dist/servy ./cmd/servy
+      - name: Smoke ${{ matrix.image }}
+        id: smoke
+        run: |
+          set -eu
+          mkdir -p smoke-logs
+          slug="$(printf '%s' '${{ matrix.image }}' | tr ':/' '--')"
+          tests/docker/smoke-one.sh '${{ matrix.image }}' 2>&1 | tee "smoke-logs/${slug}.log"
+      - name: Upload smoke log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-smoke-${{ matrix.image }}
+          path: smoke-logs/
+          if-no-files-found: warn
+          retention-days: 14
 
   lint:
     runs-on: ubuntu-latest

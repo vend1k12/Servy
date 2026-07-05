@@ -29,7 +29,7 @@ Blockers for `v1.0`:
 - `servy revert <module>` to roll back Servy-owned side effects (drop-ins, apt list files, swapfile line).
 - ~~`WriteSSHDDropIn` uses the same `Openat` / `NOFOLLOW` pattern as `AppendAuthorizedKey`.~~ (done)
 - ~~`--yes` failure message names the missing confirmation and links `docs/safety.md`.~~ (done)
-- Docker-smoke runs the four base images as a matrix and uploads build logs on failure.
+- ~~Docker-smoke runs the four base images as a matrix and uploads build logs on failure.~~ (done)
 - `install.sh` is smoke-tested in CI against a local fake release.
 - SLSA provenance and SBOM published alongside signed artifacts.
 - ~~`docs/troubleshooting.md`, `docs/faq.md`, `docs/safety.md` are written.~~ (done)
