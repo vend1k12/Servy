@@ -479,3 +479,183 @@ func reloadSSH() error {
 	}
 	return errors.New("failed to reload ssh/sshd service")
 }
+
+// RemoveSSHDDropInLines removes each `lines` entry from
+// /etc/ssh/sshd_config.d/99-servy-hardening.conf. The read/write path mirrors
+// WriteSSHDDropIn — parent directory opened with O_DIRECTORY|O_NOFOLLOW,
+// file opened via Openat with O_NOFOLLOW, staged via a sibling tempfile,
+// swapped in with Renameat. `sshd -t` runs before reload; failure reverts
+// through the same directory FD. If the resulting file is empty (or contains
+// only whitespace), the file is Unlinkat'd instead of rewritten.
+//
+// Missing drop-in file is a no-op — revert is idempotent by design.
+func RemoveSSHDDropInLines(lines []string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	remove := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		if strings.ContainsAny(line, "\r\n") || strings.TrimSpace(line) == "" {
+			return fmt.Errorf("refusing empty or multi-line sshd directive %q", line)
+		}
+		remove[strings.TrimSpace(line)] = struct{}{}
+	}
+	const (
+		sshDir      = "/etc/ssh"
+		dropInDir   = "sshd_config.d"
+		dropInName  = "99-servy-hardening.conf"
+		dropInStage = ".99-servy-hardening.conf.tmp"
+	)
+
+	sshFD, err := unix.Open(sshDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return fmt.Errorf("open %s safely: %w", sshDir, err)
+	}
+	defer unix.Close(sshFD)
+	dirFD, err := unix.Openat(sshFD, dropInDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil // already reverted
+		}
+		return fmt.Errorf("open %s/%s safely: %w", sshDir, dropInDir, err)
+	}
+	defer unix.Close(dirFD)
+
+	original, existed, err := readDropIn(dirFD, dropInName)
+	if err != nil {
+		return err
+	}
+	if !existed {
+		return nil // already reverted
+	}
+	var kept []string
+	for _, line := range strings.Split(string(original), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if _, drop := remove[trimmed]; drop {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == 0 {
+		// Every directive in the file was a Servy directive we just
+		// removed. Delete the file entirely rather than leave an empty
+		// drop-in that sshd would still parse.
+		if err := unix.Unlinkat(dirFD, dropInName, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("remove empty sshd drop-in: %w", err)
+		}
+		return reloadSSH()
+	}
+	next := []byte(strings.Join(kept, "\n") + "\n")
+	if err := writeDropInAtomic(dirFD, dropInName, dropInStage, next); err != nil {
+		return err
+	}
+	if err := testSSHDConfig(); err != nil {
+		// sshd rejected our edit — restore the original bytes through the
+		// same FD so we do not leave the host with a broken drop-in.
+		_ = writeDropInAtomic(dirFD, dropInName, dropInStage, original)
+		return err
+	}
+	return reloadSSH()
+}
+
+// RemoveFstabLine deletes the exact `line` (whitespace-preserving) from
+// /etc/fstab. Idempotent: a missing line or missing file returns nil.
+//
+// The rewrite is atomic (staged sibling + rename via Renameat through an
+// O_DIRECTORY|O_NOFOLLOW parent FD) so a mid-flight symlink at /etc/fstab
+// cannot redirect the write outside /etc.
+func RemoveFstabLine(line string) error {
+	if strings.ContainsAny(line, "\r\n") || strings.TrimSpace(line) == "" {
+		return errors.New("refusing empty or multi-line fstab entry")
+	}
+	const (
+		etcDir    = "/etc"
+		fstabName = "fstab"
+		stageName = ".fstab.servy.tmp"
+	)
+	dirFD, err := unix.Open(etcDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("open /etc safely: %w", err)
+	}
+	defer unix.Close(dirFD)
+
+	fd, err := unix.Openat(dirFD, fstabName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return fmt.Errorf("open /etc/fstab safely: %w", err)
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		_ = unix.Close(fd)
+		return fmt.Errorf("stat /etc/fstab: %w", err)
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		_ = unix.Close(fd)
+		return errors.New("refusing to modify non-regular /etc/fstab")
+	}
+	body, err := io.ReadAll(fdReader{fd: fd})
+	_ = unix.Close(fd)
+	if err != nil {
+		return fmt.Errorf("read /etc/fstab: %w", err)
+	}
+	target := strings.TrimSpace(line)
+	var kept []string
+	changed := false
+	for _, ln := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(ln) == target {
+			changed = true
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	if !changed {
+		return nil
+	}
+	// Preserve the original trailing newline convention.
+	out := strings.Join(kept, "\n")
+	if len(body) > 0 && body[len(body)-1] == '\n' && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	// Atomic swap through dirFD, same O_NOFOLLOW invariants as
+	// writeDropInAtomic. Preserve 0644 which is the historic /etc/fstab mode.
+	if err := unix.Unlinkat(dirFD, stageName, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+		return fmt.Errorf("clear stale fstab stage: %w", err)
+	}
+	sfd, err := unix.Openat(dirFD, stageName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o644)
+	if err != nil {
+		return fmt.Errorf("stage /etc/fstab: %w", err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = unix.Close(sfd)
+		}
+	}()
+	if _, err := unix.Write(sfd, []byte(out)); err != nil {
+		_ = unix.Unlinkat(dirFD, stageName, 0)
+		return fmt.Errorf("write staged fstab: %w", err)
+	}
+	if err := unix.Fchmod(sfd, 0o644); err != nil {
+		_ = unix.Unlinkat(dirFD, stageName, 0)
+		return fmt.Errorf("chmod staged fstab: %w", err)
+	}
+	if err := unix.Close(sfd); err != nil {
+		closed = true
+		_ = unix.Unlinkat(dirFD, stageName, 0)
+		return fmt.Errorf("close staged fstab: %w", err)
+	}
+	closed = true
+	if err := unix.Renameat(dirFD, stageName, dirFD, fstabName); err != nil {
+		_ = unix.Unlinkat(dirFD, stageName, 0)
+		return fmt.Errorf("install /etc/fstab: %w", err)
+	}
+	return nil
+}

@@ -41,6 +41,18 @@ func (p *Plan) Add(step Step) {
 	p.Steps = append(p.Steps, step)
 }
 
+// HasRunnableSteps reports whether the plan contains at least one WillRun
+// step. Callers use it to detect an empty plan (revert of an unmapped module,
+// re-run of an already-reverted module, etc.) before demanding --yes.
+func (p Plan) HasRunnableSteps() bool {
+	for _, step := range p.Steps {
+		if step.Status == WillRun {
+			return true
+		}
+	}
+	return false
+}
+
 func (p Plan) Blocking() []Step {
 	var out []Step
 	for _, step := range p.Steps {
