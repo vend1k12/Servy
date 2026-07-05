@@ -26,6 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Runner tests now assert `*plan.BlockingError` is returned with confirmation-key text.
 - Package-level doc comments on every file under `internal/`.
 - `dependabot.yml` covers the docker ecosystem for `tests/docker`.
+- `docs/safety.md`: safety invariants, per-key `confirmations.*` reference, SSH lockout playbook, manual rollback table until `servy revert` lands.
+- `docs/troubleshooting.md`: catalog of user-visible error messages (apply refusals, doctor warnings, SSH lockouts, keyring failures, cosign / update / install issues) with recovery steps.
+- `docs/faq.md`: positioning vs Ansible / cloud-init / bash / container managers, supported hosts, install and update flows, hand-verification recipe for release archives.
 
 ### Changed
 - `README.md` "Release status" no longer implies pre-v1 is production-ready.
@@ -36,7 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `Docker` module: `docker.gpg` + `docker.gpg.perms` collapsed into a single `docker.keyring.install` step backed by the pinned-fingerprint installer.
 - `Caddy` module: `caddy.key.install` (which shelled out to `gpg --dearmor`) replaced with the pinned-fingerprint installer. Apt reads armored keyrings natively on Ubuntu 22.04+ / Debian 12+.
 - `runner.Apply` now returns `*plan.BlockingError` instead of a first-hit `fmt.Errorf`.
-- `apply --yes` refusal message names the exact confirmation key required, references dry-run, and links `docs/architecture.md#safety-invariants`.
+- `apply --yes` refusal message names the exact confirmation key required, references dry-run, and links `docs/safety.md`.
 - All GitHub Actions in `.github/workflows/` are pinned to commit SHA with `# vN` comments; dependabot still opens bump PRs.
 
 ### Fixed
