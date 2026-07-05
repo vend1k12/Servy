@@ -38,7 +38,10 @@ case "$arch" in
   *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
 esac
 
-base="https://github.com/$REPO/releases"
+# SERVY_RELEASE_BASE overrides the release download base URL. Defaults to the
+# GitHub releases endpoint; the CI install smoke test points it at a local
+# file:// staging dir. Not intended for production use.
+base="${SERVY_RELEASE_BASE:-https://github.com/$REPO/releases}"
 asset="servy_${os}_${arch}.tar.gz"
 if [ "$VERSION" = "latest" ]; then
   url="$base/latest/download/$asset"

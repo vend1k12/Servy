@@ -30,12 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `docs/troubleshooting.md`: catalog of user-visible error messages (apply refusals, doctor warnings, SSH lockouts, keyring failures, cosign / update / install issues) with recovery steps.
 - `docs/faq.md`: positioning vs Ansible / cloud-init / bash / container managers, supported hosts, install and update flows, hand-verification recipe for release archives.
 - Docker-smoke job now runs as a `strategy.matrix.image` over `ubuntu:22.04`, `ubuntu:24.04`, `debian:12`, `debian:13` with `fail-fast: false`. Per-image build logs are teed to `smoke-logs/<slug>.log` and uploaded via `actions/upload-artifact@v7.0.1` on failure (14-day retention). Extracted `tests/docker/smoke-one.sh` so both the CI matrix and the local `tests/docker/run.sh` loop share the same build recipe.
+- `tests/install/smoke.sh` and an `install-smoke` CI job: build `servy` from source, stage a fake release (`servy_linux_<arch>.tar.gz` + `checksums.txt`) under a local `file://` base, run `install.sh` against it, assert the installed binary reports its version and passes `doctor`, then assert a tampered `checksums.txt` is rejected with a non-zero exit and no binary is left behind.
 
 ### Changed
 - `README.md` "Release status" no longer implies pre-v1 is production-ready.
 - `install.sh` checksum lookup switched from a free-form multi-branch `grep` to an `awk` exact-match against `$2`. Adds `awk` to the required tools and runs `sha256sum -c` under `LC_ALL=C`.
 - `install.sh` now attempts cosign keyless verification when signatures are published and cosign is installed.
 - `README.md` `curl … | sh` example replaced with the safer download-then-inspect pattern; documents `SERVY_REQUIRE_COSIGN` and `servy update --require-cosign`.
+- `install.sh` honours `SERVY_RELEASE_BASE` to override the release download base URL (default unchanged: `https://github.com/$REPO/releases`). Used only by the CI install smoke test; production installs are unaffected.
 - `Base.Plan` queries `dpkg-query` and marks already-installed packages as `already_ok`. `apt-get update` and `apt-get install` are skipped entirely when nothing needs installing. Only missing packages appear in the `apt-get install` argv.
 - `Docker` module: `docker.gpg` + `docker.gpg.perms` collapsed into a single `docker.keyring.install` step backed by the pinned-fingerprint installer.
 - `Caddy` module: `caddy.key.install` (which shelled out to `gpg --dearmor`) replaced with the pinned-fingerprint installer. Apt reads armored keyrings natively on Ubuntu 22.04+ / Debian 12+.
