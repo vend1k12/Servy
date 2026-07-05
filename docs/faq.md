@@ -108,6 +108,13 @@ cosign verify-blob \
   --signature servy_linux_amd64.tar.gz.sig \
   --certificate servy_linux_amd64.tar.gz.pem \
   servy_linux_amd64.tar.gz
+
+# GitHub attestations (SLSA build provenance + SBOM) shipped since v0.1.0-preview
+gh attestation verify servy_linux_amd64.tar.gz --owner vend1k12
+
+# Inspect the release SBOM (SPDX JSON)
+curl -fsSL https://github.com/vend1k12/Servy/releases/download/vX.Y.Z/sbom.spdx.json -o sbom.spdx.json
+jq '.name, .creationInfo.creators, [.packages[].name] | length' sbom.spdx.json
 ```
 
 ## Configuration
